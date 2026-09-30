@@ -34,6 +34,29 @@ function reservedQty(c,pid,wid){
  return c.db.reservations.filter(r=>r.productId===pid&&(!wid||r.warehouseId===wid)&&r.status==='active').reduce((s,r)=>s+Number(r.qty||0),0)
 }
 function availableStock(c,pid,wid){return c.stock(pid,wid)-reservedQty(c,pid,wid)}
+
+function priceFor(c,p,qty=1,customerId=''){
+ const customer=c.db.customers.find(x=>x.id===customerId),list=customer?.pricelist||'retail',q=Number(qty||1);
+ if(list==='wholesale')return Number(p.wholesalePrice||p.price||0);
+ if(list==='tiered'){
+   if(q>=24&&Number(p.price24||0)>0)return Number(p.price24);
+   if(q>=12&&Number(p.price12||0)>0)return Number(p.price12);
+   if(q>=6&&Number(p.price6||0)>0)return Number(p.price6);
+   return Number(p.wholesalePrice||p.price||0);
+ }
+ return Number(p.price||0)
+}
+function customerOutstanding(c,customerId,excludeInvoiceId=''){
+ return c.db.invoices.filter(i=>i.customerId===customerId&&i.id!==excludeInvoiceId&&!i.deletedAt&&!['cancelled','returned'].includes(i.status)).reduce((sum,i)=>sum+c.invTotals(i).due,0)
+}
+function creditAllowed(c,customerId,newDue=0,excludeInvoiceId=''){
+ const customer=c.db.customers.find(x=>x.id===customerId);if(!customer||Number(customer.creditLimit||0)<=0)return true;
+ return customerOutstanding(c,customerId,excludeInvoiceId)+Number(newDue||0)<=Number(customer.creditLimit||0)
+}
+function requiresApproval(c,amount){
+ const role=c.currentUser()?.role||'';if(['Owner','Admin'].includes(role))return false;
+ return Number(amount||0)>Number(c.db.security?.approvalLimit||0)&&Number(c.db.security?.approvalLimit||0)>0
+}
 function quoteToOrder(c,qid){
  const q=c.db.quotations.find(x=>x.id===qid);if(!q)return;
  const exists=c.db.salesOrders.find(x=>x.quoteId===qid&&!['cancelled'].includes(x.status));if(exists){c.toast('يوجد أمر بيع مرتبط بهذا العرض');return}
@@ -240,7 +263,7 @@ function wireInventory(c){
  const sr=document.querySelector('#newSerial');if(sr)sr.onclick=()=>{if(!c.db.products.some(p=>p.serialTracked)){c.toast('فعّل تتبع Serial لمنتج أولاً');return}c.openModal('إضافة Serial',serialForm(c),false);setTimeout(()=>{const f=document.querySelector('#serialForm');if(f)f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f),serial=String(fd.get('serial')||'').trim();if(c.db.serials.some(x=>x.serial===serial)){c.toast('Serial مستخدم مسبقاً');return}c.db.serials.push({id:c.uid('ser'),companyId:c.db.session.companyId,productId:fd.get('productId'),warehouseId:fd.get('warehouseId'),serial,status:'available',createdAt:c.now()});c.audit('إضافة Serial','Inventory',serial);c.save('تم حفظ Serial');c.closeModal();c.render()}},0)}
 }
 function viewPOS(c){
- let html=window.NBHYPER.viewPOS(c);
+ const customerId=c.db.ui?.posCustomerId||'';(c.state.posCart||[]).forEach(x=>{const p=c.db.products.find(v=>v.id===x.productId);if(p)x.price=priceFor(c,p,x.qty,customerId)});let html=window.NBHYPER.viewPOS(c);
  const target='<div class="field"><label>طريقة الدفع</label><select id="posMethod"><option value="cash">نقدي</option><option value="card">بطاقة</option><option value="bank">تحويل</option><option value="other">أخرى</option></select></div>';
  const repl='<div class="pos-payment-box"><div class="field"><label>طريقة الدفع 1</label><select id="posMethod"><option value="cash">نقدي</option><option value="card">بطاقة</option><option value="bank">تحويل</option><option value="other">أخرى</option></select></div><div class="field"><label>مبلغ الدفع 1</label><input id="posPay1" type="number" min="0" placeholder="اتركه فارغاً لدفع الكل"></div><div class="field"><label>طريقة الدفع 2</label><select id="posMethod2"><option value="">— بدون —</option><option value="cash">نقدي</option><option value="card">بطاقة</option><option value="bank">تحويل</option><option value="other">أخرى</option></select></div><div class="field"><label>مبلغ الدفع 2</label><input id="posPay2" type="number" min="0" value="0"></div></div>';
  if(html.includes(target))html=html.replace(target,repl);
@@ -252,7 +275,7 @@ function ensureShift(c){
 }
 function completeAdvancedPOS(c){
  if(!c.state.posCart.length)return;const shift=ensureShift(c),base=c.state.posCart.reduce((sum,x)=>sum+Number(x.qty)*Number(x.price),0),discount=Math.min(base,Number(c.db.ui.posDiscount||0)),total=Math.max(0,base-discount),customerId=document.querySelector('#posCustomer')?.value||'',m1=document.querySelector('#posMethod')?.value||'cash',m2=document.querySelector('#posMethod2')?.value||'',raw1=document.querySelector('#posPay1')?.value,p1=raw1===''?total:Math.max(0,Number(raw1||0)),p2=Math.max(0,Number(document.querySelector('#posPay2')?.value||0)),paid=Math.min(total,p1+p2);
- if(paid<total&&!customerId){c.toast('اختر عميلاً عند البيع الآجل أو الدفع الجزئي');return}
+ if(paid<total&&!customerId){c.toast('اختر عميلاً عند البيع الآجل أو الدفع الجزئي');return}if(customerId&&!creditAllowed(c,customerId,total-paid,'')){c.toast('العملية تتجاوز الحد الائتماني للعميل');return}
  const no=c.db.settings.invoicePrefix+'-'+c.db.settings.nextInvoice++;const pays=[];if(p1>0)pays.push({id:c.uid('pay'),amount:Math.min(p1,total),method:m1,date:c.today()});if(m2&&p2>0&&p1<total)pays.push({id:c.uid('pay'),amount:Math.min(p2,total-Math.min(p1,total)),method:m2,date:c.today()});
  const inv={id:c.uid('inv'),companyId:c.db.session.companyId,branchId:c.db.session.branchId,warehouseId:c.warehouse()?.id||'',number:no,date:c.today(),time:new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}),employee:c.currentUser().name,shiftId:shift.id,customerId,status:paid>=total?'paid':paid>0?'partial':'confirmed',items:c.state.posCart.map(x=>({...x,discount:0,tax:Number(c.db.products.find(p=>p.id===x.productId)?.tax||0),color:'',size:''})),shipping:0,discount,notes:'POS',payments:pays,createdAt:c.now(),deletedAt:null};
  for(const x of inv.items){const p=c.db.products.find(v=>v.id===x.productId);if(p?.trackStock&&availableStock(c,p.id,inv.warehouseId)<Number(x.qty||0)){c.toast('المخزون غير كافٍ لـ '+p.nameAr);c.db.settings.nextInvoice--;return}}
@@ -260,7 +283,9 @@ function completeAdvancedPOS(c){
  c.audit('بيع نقطة بيع','POS',no+' / '+paid+'/'+total);c.save(paid<total?'تم البيع مع رصيد مستحق':'تمت عملية البيع');c.state.posCart=[];c.db.ui.posDiscount=0;c.printInvoiceDoc(inv);c.render()
 }
 function wirePOS(c){
- window.NBHYPER.wirePOS(c);const btn=document.querySelector('#completePOS');if(btn)btn.onclick=()=>completeAdvancedPOS(c)
+ window.NBHYPER.wirePOS(c);
+ const customer=document.querySelector('#posCustomer');if(customer){customer.value=c.db.ui?.posCustomerId||'';customer.onchange=()=>{c.db.ui.posCustomerId=customer.value;(c.state.posCart||[]).forEach(x=>{const p=c.db.products.find(v=>v.id===x.productId);if(p)x.price=priceFor(c,p,x.qty,customer.value)});c.save();c.render()}}
+ const btn=document.querySelector('#completePOS');if(btn)btn.onclick=()=>completeAdvancedPOS(c)
 }
 function supplierReturnForm(c){
  const pos=c.db.purchaseOrders.filter(p=>['received','closed','approved'].includes(p.status));
@@ -273,5 +298,21 @@ function guardFinancialEdit(c,entity){
  const s=c.db.security;if(!s?.lockFinancialEdits)return true;
  const date=entity?.date||c.today();if(s.lockDate&&date<=s.lockDate){c.toast('الفترة مقفلة حتى '+s.lockDate);return false}return true
 }
-window.NBADV={migrate,recordChange,availableStock,reservedQty,viewWorkflows,wireWorkflows,openPartialReturn,runAutomations,viewAutomation,wireAutomation,viewFinancePro,viewPayroll,wirePayroll,viewSecurity,wireSecurity,showLock,sessionTick,noteActivity,viewIntegrations,wireIntegrations,viewQA,wireQA,showCommand,initGlobal,wireInvoiceExtras,mirrorIndexedDB,guardFinancialEdit,hashText,viewPOS,wirePOS,supplierReturnForm,wireSupplierReturn,viewInventory,wireInventory,printBusinessDoc,excelDownload};
+
+function wireReportExtras(c){
+ const actions=document.querySelector('.page-head .actions');if(!actions||document.querySelector('#reportExcel'))return;
+ const b=document.createElement('button');b.className='btn outline';b.id='reportExcel';b.innerHTML=c.icon('data',16)+' Excel';actions.appendChild(b);
+ b.onclick=()=>excelDownload(c,'NovaBlu_Report_'+c.today()+'.xls',[['Invoice','Date','Customer','Total','Paid','Due','Status'],...c.db.invoices.filter(i=>!i.deletedAt).map(i=>[i.number,i.date,c.db.customers.find(x=>x.id===i.customerId)?.name||i.customerSnapshot?.name||'',c.invTotals(i).total,c.invTotals(i).paid,c.invTotals(i).due,i.status])])
+}
+function wireDataExtras(c){
+ const toolbars=[...document.querySelectorAll('.card .toolbar')];const host=toolbars[toolbars.length-1];if(!host||document.querySelector('#excelProducts'))return;
+ const p=document.createElement('button');p.className='btn outline';p.id='excelProducts';p.textContent='Excel المنتجات';host.appendChild(p);p.onclick=()=>excelDownload(c,'NovaBlu_Products_'+c.today()+'.xls',[['Name','SKU','Barcode','Cost','Price','Stock'],...c.db.products.map(x=>[x.nameAr,x.sku,x.barcode,x.cost,x.price,x.trackStock?c.stock(x.id):''])]);
+ const cu=document.createElement('button');cu.className='btn outline';cu.id='excelCustomers';cu.textContent='Excel العملاء';host.appendChild(cu);cu.onclick=()=>excelDownload(c,'NovaBlu_Customers_'+c.today()+'.xls',[['Name','Phone','Email','Credit Limit','Outstanding'],...c.db.customers.map(x=>[x.name,x.phone,x.email,x.creditLimit,customerOutstanding(c,x.id)])])
+}
+function wireQuoteWorkflow(c){
+ document.querySelectorAll('[data-quote]').forEach(()=>{});
+ const actions=document.querySelectorAll('[data-quote-invoice]');
+ actions.forEach(btn=>{const qid=btn.dataset.quoteInvoice;if(!qid)return;btn.textContent='أمر بيع';btn.className='btn green sm';btn.onclick=()=>quoteToOrder(c,qid)})
+}
+window.NBADV={migrate,recordChange,availableStock,reservedQty,priceFor,customerOutstanding,creditAllowed,requiresApproval,viewWorkflows,wireWorkflows,openPartialReturn,runAutomations,viewAutomation,wireAutomation,viewFinancePro,viewPayroll,wirePayroll,viewSecurity,wireSecurity,showLock,sessionTick,noteActivity,viewIntegrations,wireIntegrations,viewQA,wireQA,showCommand,initGlobal,wireInvoiceExtras,mirrorIndexedDB,guardFinancialEdit,hashText,viewPOS,wirePOS,supplierReturnForm,wireSupplierReturn,viewInventory,wireInventory,printBusinessDoc,excelDownload,wireReportExtras,wireDataExtras,wireQuoteWorkflow};
 })();
