@@ -245,12 +245,43 @@ function wireSales(c){
   document.querySelectorAll('[data-share-invoice]').forEach(b=>b.onclick=()=>shareInvoice(c,c.db.invoices.find(x=>x.id===b.dataset.shareInvoice)));
   document.querySelectorAll('[data-duplicate-invoice]').forEach(b=>b.onclick=()=>duplicateInvoice(c,c.db.invoices.find(x=>x.id===b.dataset.duplicateInvoice)));
 }
+
+function invoicePrice(c,p,qty){
+ const customerId=document.querySelector('#invoiceCustomer')?.value||'';
+ if(window.NBADV&&NBADV.priceFor)return NBADV.priceFor(c,p,qty,customerId);
+ return Number(p.price||0)
+}
+function productQtyMap(items){
+ const m={};(items||[]).forEach(x=>{if(!x.productId)return;m[x.productId]=(m[x.productId]||0)+Number(x.qty||0)});return m
+}
+function invoicePostsStock(i){return ['confirmed','partial','paid'].includes(i?.status)}
+function existingStockPosted(c,i){
+ if(!i)return false;if(i.stockPosted===true)return true;
+ return c.db.stockMoves.some(m=>m.ref===i.number&&m.warehouseId===i.warehouseId&&m.type==='delivery')
+}
+function syncInvoiceStock(c,oldI,newI){
+ const oldPosted=existingStockPosted(c,oldI),newPosted=invoicePostsStock(newI);
+ const oldMap=oldPosted?productQtyMap(oldI?.items):{},newMap=newPosted?productQtyMap(newI?.items):{};
+ const oldWh=oldI?.warehouseId||newI.warehouseId,newWh=newI.warehouseId;
+ const useAvailable=(pid,wid)=>window.NBADV&&NBADV.availableStock?NBADV.availableStock(c,pid,wid):c.stock(pid,wid);
+ if(oldPosted&&oldWh!==newWh){
+   for(const [pid,qty] of Object.entries(oldMap)){if(qty>0)c.db.stockMoves.push({id:c.uid('sm'),companyId:newI.companyId,warehouseId:oldWh,productId:pid,type:'receipt',qty,date:c.today(),ref:newI.number,note:'إلغاء ترحيل فاتورة من مخزن سابق'})}
+   for(const [pid,qty] of Object.entries(newMap)){if(qty>0&&useAvailable(pid,newWh)<qty){c.toast('المخزون غير كافٍ بعد تغيير المخزن');return false}}
+   for(const [pid,qty] of Object.entries(newMap)){if(qty>0)c.db.stockMoves.push({id:c.uid('sm'),companyId:newI.companyId,warehouseId:newWh,productId:pid,type:'delivery',qty,date:c.today(),ref:newI.number,note:'ترحيل فاتورة بعد تغيير المخزن'})}
+ }else{
+   const ids=new Set([...Object.keys(oldMap),...Object.keys(newMap)]);
+   for(const pid of ids){const diff=Number(newMap[pid]||0)-Number(oldMap[pid]||0);if(diff>0&&useAvailable(pid,newWh)<diff){c.toast('المخزون غير كافٍ لـ '+(c.db.products.find(p=>p.id===pid)?.nameAr||pid));return false}}
+   for(const pid of ids){const diff=Number(newMap[pid]||0)-Number(oldMap[pid]||0);if(diff===0)continue;c.db.stockMoves.push({id:c.uid('sm'),companyId:newI.companyId,warehouseId:newWh,productId:pid,type:diff>0?'delivery':'receipt',qty:Math.abs(diff),date:c.today(),ref:newI.number,note:'تسوية مخزون فاتورة'})}
+ }
+ newI.stockPosted=newPosted;
+ return true
+}
 function wireInvoiceLines(c){
   document.querySelectorAll('#invLines .remove-line').forEach(b=>b.onclick=()=>{if(document.querySelectorAll('#invLines tr[data-inv-row]').length>1)b.closest('tr').remove();formTotals(c)});
   document.querySelectorAll('#invLines .inv-prod').forEach(sel=>sel.onchange=()=>{
-    const p=c.db.products.find(x=>x.id===sel.value),tr=sel.closest('tr');if(p&&tr){tr.querySelector('.inv-name').value=p.nameAr;tr.querySelector('.inv-price').value=p.price;tr.querySelector('.inv-tax').value=p.tax||0}formTotals(c)
+    const p=c.db.products.find(x=>x.id===sel.value),tr=sel.closest('tr');if(p&&tr){const qty=Number(tr.querySelector('.inv-qty')?.value||1);tr.querySelector('.inv-name').value=p.nameAr;tr.querySelector('.inv-price').value=invoicePrice(c,p,qty);tr.querySelector('.inv-tax').value=p.tax||0}formTotals(c)
   });
-  document.querySelectorAll('#invLines input').forEach(inp=>inp.oninput=()=>formTotals(c));
+  document.querySelectorAll('#invLines input').forEach(inp=>inp.oninput=()=>{const tr=inp.closest('tr');if(inp.classList.contains('inv-qty')&&tr){const p=c.db.products.find(x=>x.id===tr.querySelector('.inv-prod')?.value);if(p)tr.querySelector('.inv-price').value=invoicePrice(c,p,Number(inp.value||1))}formTotals(c)});
 }
 function wireInvoiceForm(c){
   const f=document.querySelector('#invoiceForm');if(!f)return;
@@ -258,21 +289,21 @@ function wireInvoiceForm(c){
   wireInvoiceLines(c);
   ['shipping','discount'].forEach(n=>{const el=f.elements[n];if(el)el.oninput=()=>formTotals(c)});
   const cust=document.querySelector('#invoiceCustomer');if(cust)cust.onchange=()=>{
-    const x=c.db.customers.find(v=>v.id===cust.value);if(!x)return;
-    f.elements.customerName.value=x.name||'';f.elements.customerPhone.value=x.phone||'';f.elements.customerAddress.value=x.address||'';
+    const x=c.db.customers.find(v=>v.id===cust.value);if(x){f.elements.customerName.value=x.name||'';f.elements.customerPhone.value=x.phone||'';f.elements.customerAddress.value=x.address||''}
+    document.querySelectorAll('#invLines tr[data-inv-row]').forEach(tr=>{const p=c.db.products.find(v=>v.id===tr.querySelector('.inv-prod')?.value);if(p)tr.querySelector('.inv-price').value=invoicePrice(c,p,Number(tr.querySelector('.inv-qty')?.value||1))});formTotals(c)
   };
   f.onsubmit=e=>{
     e.preventDefault();const i=readInvoiceForm(c),ix=c.db.invoices.findIndex(x=>x.id===i.id),old=ix>=0?c.clone(c.db.invoices[ix]):null;
     if(window.NBADV&&old&&!NBADV.guardFinancialEdit(c,old))return;
     const duplicate=c.db.invoices.find(x=>x.id!==i.id&&!x.deletedAt&&String(x.number).trim()===String(i.number).trim());if(duplicate){c.toast('رقم الفاتورة مستخدم مسبقاً: '+i.number);return}
-    const customer=c.db.customers.find(x=>x.id===i.customerId);if(customer&&Number(customer.creditLimit||0)>0){const otherDue=c.db.invoices.filter(x=>x.customerId===customer.id&&x.id!==i.id&&!x.deletedAt&&!['cancelled','returned'].includes(x.status)).reduce((sum,x)=>sum+c.invTotals(x).due,0),newDue=c.invTotals(i).due,totalCredit=otherDue+newDue;if(totalCredit>Number(customer.creditLimit)){const privileged=['Owner','Admin','Manager'].includes(c.currentUser().role);if(!privileged){c.toast('تجاوز حد ائتمان العميل');return}if(!confirm('سيتجاوز العميل حده الائتماني. متابعة بصلاحية '+c.currentUser().role+'؟'))return;c.audit('تجاوز حد ائتماني','Invoice',i.number+' / '+customer.name)}}
+    const customer=c.db.customers.find(x=>x.id===i.customerId);if(customer&&Number(customer.creditLimit||0)>0){const otherDue=c.db.invoices.filter(x=>x.customerId===customer.id&&x.id!==i.id&&!x.deletedAt&&!['cancelled','returned'].includes(x.status)).reduce((sum,x)=>sum+c.invTotals(x).due,0),newDue=c.invTotals(i).due,totalCredit=otherDue+newDue;if(totalCredit>Number(customer.creditLimit)){const privileged=['Owner','Admin','Manager'].includes(c.currentUser().role);if(!privileged){c.toast('تجاوز حد ائتمان العميل');return}if(!confirm('سيتجاوز العميل حده الائتماني. متابعة بصلاحية '+c.currentUser().role+'؟'))return;c.audit('تجاوز حد ائتماني','Invoice',i.number+' / '+customer.name)}}if(!syncInvoiceStock(c,old,i))return;
     if(ix>=0){c.db.invoices[ix]=i;if(window.NBADV)NBADV.recordChange(c,'Invoice',i.id,old,i,'تعديل');c.audit('تعديل فاتورة','Invoice',i.number)}
     else{c.db.invoices.push(i);c.db.settings.nextInvoice++;if(window.NBADV)NBADV.recordChange(c,'Invoice',i.id,null,i,'إنشاء');c.audit('إنشاء فاتورة','Invoice',i.number)}
     c.save('تم حفظ الفاتورة');c.closeModal();c.render();
   };
   const ap=document.querySelector('#addPayment');if(ap)ap.onclick=()=>{
     const id=f.dataset.id;if(!id){c.toast('احفظ الفاتورة أولاً ثم أضف الدفعة');return}
-    const inv=c.db.invoices.find(x=>x.id===id),max=c.invTotals(inv).due;if(max<=0){c.toast('الفاتورة مسددة بالكامل');return}
+    const inv=c.db.invoices.find(x=>x.id===id),max=c.invTotals(inv).due;if(window.NBADV&&!NBADV.guardFinancialEdit(c,inv))return;if(max<=0){c.toast('الفاتورة مسددة بالكامل');return}
     const amt=prompt('مبلغ الدفعة',String(max));if(!amt||Number(amt)<=0)return;
     const meth=prompt('طريقة الدفع: cash / card / bank','cash')||'cash';
     inv.payments=inv.payments||[];inv.payments.push({id:c.uid('pay'),amount:Math.min(Number(amt),max),method:meth,date:c.today()});
@@ -285,7 +316,7 @@ function wireInvoiceForm(c){
   const pr=document.querySelector('#printInvoice');if(pr)pr.onclick=()=>printInvoiceDoc(c,getInv());
   const sh=document.querySelector('#shareInvoice');if(sh)sh.onclick=()=>shareInvoice(c,getInv());
   const du=document.querySelector('#duplicateInvoice');if(du)du.onclick=()=>duplicateInvoice(c,getInv());
-  const del=document.querySelector('#deleteInvoice');if(del)del.onclick=()=>{const i=getInv();if(!i||!confirm('نقل الفاتورة إلى سلة المحذوفات لمدة 7 أيام؟'))return;i.deletedAt=c.now();c.db.trash.push({id:c.uid('tr'),type:'invoice',entityId:i.id,label:i.number,deletedAt:i.deletedAt,data:null});c.audit('حذف إلى السلة','Invoice',i.number);c.save('تم النقل إلى السلة');c.closeModal();c.render()};
+  const del=document.querySelector('#deleteInvoice');if(del)del.onclick=()=>{const i=getInv();if(!i)return;if(existingStockPosted(c,i)){c.toast('لا يمكن حذف فاتورة مرحّلة. استخدم الإلغاء أو المرتجع أولاً');return}if(!confirm('نقل الفاتورة إلى سلة المحذوفات لمدة 7 أيام؟'))return;i.deletedAt=c.now();c.db.trash.push({id:c.uid('tr'),type:'invoice',entityId:i.id,label:i.number,deletedAt:i.deletedAt,data:null});c.audit('حذف إلى السلة','Invoice',i.number);c.save('تم النقل إلى السلة');c.closeModal();c.render()};
   formTotals(c);
 }
 function duplicateInvoice(c,i){
