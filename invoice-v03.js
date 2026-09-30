@@ -236,7 +236,7 @@ function wireSales(c){
   };
   const search=document.querySelector('#salesSearch'),status=document.querySelector('#salesStatus');
   if(search)search.oninput=filter;if(status)status.onchange=filter;
-  const ex=document.querySelector('#exportSales');if(ex)ex.onclick=()=>c.csv('novablu-sales-'+c.today()+'.csv',[['number','date','time','customer','phone','total','paid','due','status','employee'],...c.db.invoices.filter(i=>!i.deletedAt).map(i=>{const cs=safeCustomer(c,i),t=c.invTotals(i);return[i.number,i.date,i.time||'',cs.name,cs.phone,t.total,t.paid,t.due,i.status,i.employee||'']})]);
+  const ex=document.querySelector('#exportSales');if(ex){if(c.can&&!c.can('sales','export'))ex.remove();else ex.onclick=()=>c.csv('novablu-sales-'+c.today()+'.csv',[['number','date','time','customer','phone','total','paid','due','status','employee'],...c.db.invoices.filter(i=>!i.deletedAt).map(i=>{const cs=safeCustomer(c,i),t=c.invTotals(i);return[i.number,i.date,i.time||'',cs.name,cs.phone,t.total,t.paid,t.due,i.status,i.employee||'']})]);}
   document.querySelectorAll('[data-invoice-toggle]').forEach(b=>b.onclick=()=>{
     const card=b.closest('[data-invoice-card]'),d=card?.querySelector('.invoice-list-detail');if(!d)return;
     const willOpen=d.classList.contains('hidden');d.classList.toggle('hidden');b.setAttribute('aria-expanded',willOpen?'true':'false');card.classList.toggle('open',willOpen);
@@ -316,7 +316,7 @@ function wireInvoiceForm(c){
   const pr=document.querySelector('#printInvoice');if(pr)pr.onclick=()=>printInvoiceDoc(c,getInv());
   const sh=document.querySelector('#shareInvoice');if(sh)sh.onclick=()=>shareInvoice(c,getInv());
   const du=document.querySelector('#duplicateInvoice');if(du)du.onclick=()=>duplicateInvoice(c,getInv());
-  const del=document.querySelector('#deleteInvoice');if(del)del.onclick=()=>{const i=getInv();if(!i)return;if(existingStockPosted(c,i)){c.toast('لا يمكن حذف فاتورة مرحّلة. استخدم الإلغاء أو المرتجع أولاً');return}if(!confirm('نقل الفاتورة إلى سلة المحذوفات لمدة 7 أيام؟'))return;i.deletedAt=c.now();c.db.trash.push({id:c.uid('tr'),type:'invoice',entityId:i.id,label:i.number,deletedAt:i.deletedAt,data:null});c.audit('حذف إلى السلة','Invoice',i.number);c.save('تم النقل إلى السلة');c.closeModal();c.render()};
+  const del=document.querySelector('#deleteInvoice');if(del)del.onclick=()=>{if(c.can&&!c.can('sales','delete')){c.toast('لا توجد صلاحية حذف فاتورة');return}const i=getInv();if(!i)return;if(existingStockPosted(c,i)){c.toast('لا يمكن حذف فاتورة مرحّلة. استخدم الإلغاء أو المرتجع أولاً');return}if(!confirm('نقل الفاتورة إلى سلة المحذوفات لمدة 7 أيام؟'))return;i.deletedAt=c.now();c.db.trash.push({id:c.uid('tr'),type:'invoice',entityId:i.id,label:i.number,deletedAt:i.deletedAt,data:null});c.audit('حذف إلى السلة','Invoice',i.number);c.save('تم النقل إلى السلة');c.closeModal();c.render()};
   formTotals(c);
 }
 function duplicateInvoice(c,i){
