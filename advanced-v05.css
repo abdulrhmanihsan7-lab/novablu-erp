@@ -16,3 +16,8 @@
 body.theme-dark .automation-card,body.theme-dark .advanced-fin-card,body.theme-dark .integration-card,body.theme-dark .qa-test,body.theme-dark .qa-score,body.theme-dark .command-box{background:#111827;border-color:#263244;color:#e5e7eb}body.theme-dark .advanced-mini-kpis>div,body.theme-dark #cmdResults button:hover,body.theme-dark #cmdResults button.selected{background:#0f172a}
 @media(max-width:900px){.advanced-fin-grid{grid-template-columns:repeat(2,1fr)}.automation-grid,.integration-grid,.qa-grid{grid-template-columns:1fr}.advanced-flow{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:max-content}}
 @media(max-width:600px){.advanced-fin-grid{grid-template-columns:1fr 1fr}.advanced-fin-card strong{font-size:14px}.advanced-flow{padding:11px}.command-overlay{padding-top:7vh}.qa-grid{grid-template-columns:1fr}}
+
+.crm-stage{transition:.16s ease}.crm-stage.drag-over{outline:2px dashed #60a5fa;outline-offset:-5px;background:#eff6ff!important}.crm-lead-card{cursor:grab;border-radius:12px}.crm-lead-card.dragging{opacity:.45;transform:scale(.98)}
+.pos-payment-box{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:9px;border:1px solid var(--line);border-radius:13px;background:#f8fafc;margin-top:8px}.pos-payment-box .field{margin:0}.advanced-inventory-extra{margin-top:14px}
+body.theme-dark .crm-stage.drag-over{background:#172554!important}body.theme-dark .pos-payment-box{background:#0f172a;border-color:#263244}
+@media(max-width:600px){.pos-payment-box{grid-template-columns:1fr 1fr}.advanced-inventory-extra{grid-template-columns:1fr}}
