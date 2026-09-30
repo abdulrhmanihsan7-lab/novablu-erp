@@ -92,8 +92,9 @@ function wireProductForm(c){
     e.preventDefault();const fd=new FormData(f),id=f.dataset.id||c.uid('p'),old=c.db.products.find(x=>x.id===id)||{},file=document.querySelector('#productImageFile')?.files?.[0];
     let image=old.image||'';if(file)image=await imageToDataUrl(file,c.db.settings.productImageMaxKB||450);
     const p={id,companyId:c.db.session.companyId,nameAr:fd.get('nameAr'),nameEn:fd.get('nameEn'),image,brand:fd.get('brand'),tags:fd.get('tags'),sku:fd.get('sku'),barcode:fd.get('barcode'),categoryId:fd.get('categoryId'),unit:fd.get('unit'),cost:Number(fd.get('cost')||0),price:Number(fd.get('price')||0),wholesalePrice:Number(fd.get('wholesalePrice')||0),price6:Number(fd.get('price6')||0),price12:Number(fd.get('price12')||0),price24:Number(fd.get('price24')||0),tax:Number(fd.get('tax')||0),trackStock:fd.get('trackStock')==='on',reorder:Number(fd.get('reorder')||0),minQty:Number(fd.get('minQty')||1),supplierId:fd.get('supplierId'),location:fd.get('location'),variants:String(fd.get('variants')||'').split(',').map(x=>x.trim()).filter(Boolean),uoms:String(fd.get('uoms')||fd.get('unit')||'قطعة').split(',').map(x=>x.trim()).filter(Boolean),lotTracked:fd.get('lotTracked')==='on',serialTracked:fd.get('serialTracked')==='on',expiryTracked:fd.get('expiryTracked')==='on',active:fd.get('active')==='on'};
-    const ix=c.db.products.findIndex(x=>x.id===id);if(ix>=0)c.db.products[ix]=p;else c.db.products.push(p);
-    c.audit(ix>=0?'تعديل منتج':'إنشاء منتج','Product',p.nameAr);c.save('تم حفظ المنتج');c.closeModal();c.render();
+    const dupSku=c.db.products.find(x=>x.id!==id&&String(x.sku||'').trim()&&String(x.sku||'').trim().toLowerCase()===String(p.sku||'').trim().toLowerCase());if(dupSku){c.toast('SKU مستخدم مسبقاً: '+p.sku);return}
+    const ix=c.db.products.findIndex(x=>x.id===id);const before=ix>=0?c.clone(c.db.products[ix]):null;if(ix>=0)c.db.products[ix]=p;else c.db.products.push(p);
+    if(window.NBADV)NBADV.recordChange(c,'Product',id,before,p,ix>=0?'تعديل':'إنشاء');c.audit(ix>=0?'تعديل منتج':'إنشاء منتج','Product',p.nameAr);c.save('تم حفظ المنتج');c.closeModal();c.render();
   };
 }
 
