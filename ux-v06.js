@@ -59,7 +59,7 @@ function decoratePageHead(c,route){
  const h=document.querySelector('.page-head');if(!h)return;let fav=h.querySelector('.ux-favorite');if(!fav){fav=document.createElement('button');fav.className='ux-favorite';h.querySelector('.actions')?.prepend(fav)}
  const active=(pref(c).favoriteRoutes||[]).includes(route);fav.innerHTML=active?'★':'☆';fav.title=active?'إزالة من المفضلة':'إضافة إلى المفضلة';fav.onclick=()=>toggleFavorite(c,route)
 }
-function saveFilter(c,route,key,value){c.db.ui.savedFilters[route]=c.db.ui.savedFilters[route]||{};c.db.ui.savedFilters[route][key]=value;localStorage.setItem('novablu_erp_db_v1',JSON.stringify(c.db))}
+function saveFilter(c,route,key,value){c.db.ui.savedFilters[route]=c.db.ui.savedFilters[route]||{};c.db.ui.savedFilters[route][key]=value;localStorage.setItem('novablu_erp_v1_free',JSON.stringify(c.db))}
 function restoreFilters(c,route){
  const f=c.db.ui.savedFilters?.[route]||{},map={sales:[['#salesSearch','q','input'],['#salesStatus','status','change']],products:[['#prodSearch','q','input'],['#prodStockFilter','stock','change']],customers:[['#contactSearch','q','input'],['#contactDebtFilter','debt','change']],suppliers:[['#contactSearch','q','input']],reports:[['#reportFrom','from','change'],['#reportTo','to','change']]};
  (map[route]||[]).forEach(([sel,key,event])=>{const el=document.querySelector(sel);if(!el)return;if(f[key]!==undefined&&f[key]!==''&&el.value!==f[key]){el.value=f[key];el.dispatchEvent(new Event(event,{bubbles:true}))}el.addEventListener(event,()=>saveFilter(c,route,key,el.value))})
