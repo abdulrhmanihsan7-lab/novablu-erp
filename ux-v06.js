@@ -76,8 +76,9 @@ function searchItems(c,q){
 }
 function wireLiveSearch(c){
  const input=document.querySelector('#globalSearch'),bar=input?.closest('.searchbar');if(!input||!bar)return;let pop=document.querySelector('#uxSearchResults');if(!pop){pop=document.createElement('div');pop.id='uxSearchResults';pop.className='ux-search-results hidden';bar.appendChild(pop)}
+ if(input.dataset.uxSearchBound)return;input.dataset.uxSearchBound='1';
  const close=()=>pop.classList.add('hidden'),draw=()=>{const arr=searchItems(c,input.value);if(!input.value.trim()){close();return}pop.innerHTML=arr.length?arr.map(x=>`<button data-search-type="${x.type}" data-search-id="${x.id}">${c.icon(x.icon,18)}<span><strong>${c.esc(x.title)}</strong><small>${c.esc(x.sub||'')}</small></span></button>`).join(''):`<div class="ux-search-empty">${c.icon('search',21)}<span>لا توجد نتيجة مطابقة</span></div>`;pop.classList.remove('hidden');pop.querySelectorAll('[data-search-type]').forEach(b=>b.onclick=()=>{close();input.value='';c.quick(b.dataset.searchType,b.dataset.searchId)})};
- input.addEventListener('input',draw);input.addEventListener('focus',draw)
+ input.addEventListener('input',draw);input.addEventListener('focus',draw);document.addEventListener('click',e=>{if(!bar.contains(e.target))close()})
 }
 function enhanceTables(c){
  const size=Number(pref(c).pageSize||25);document.querySelectorAll('.table-wrap table tbody').forEach(tb=>{const rows=[...tb.children];if(rows.length<=size)return;rows.forEach((r,i)=>r.classList.toggle('ux-row-hidden',i>=size));const wrap=tb.closest('.table-wrap');if(wrap.parentElement.querySelector('.ux-show-more'))return;const b=document.createElement('button');b.className='btn outline ux-show-more';b.textContent=`عرض الكل (${rows.length})`;b.onclick=()=>{rows.forEach(r=>r.classList.remove('ux-row-hidden'));b.remove()};wrap.after(b)})
