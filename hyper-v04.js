@@ -128,7 +128,7 @@ function contactForm(c,kind,id){
     <div class="field"><label>الاسم</label><input name="name" value="${c.esc(x.name)}" required></div><div class="field"><label>الهاتف</label><input name="phone" inputmode="tel" value="${c.esc(x.phone||'')}"></div>
     <div class="field"><label>البريد</label><input name="email" type="email" value="${c.esc(x.email||'')}"></div><div class="field"><label>المحافظة / المدينة</label><input name="governorate" value="${c.esc(x.governorate||'')}"></div>
     <div class="field full"><label>العنوان</label><input name="address" value="${c.esc(x.address||'')}"></div><div class="field"><label>الرقم الضريبي</label><input name="taxId" value="${c.esc(x.taxId||'')}"></div>
-    <div class="field"><label>وسوم</label><input name="tags" value="${c.esc(x.tags||'')}" placeholder="VIP، جملة، متابعة"></div><div class="field"><label>حد ائتماني</label><input type="number" name="creditLimit" min="0" value="${Number(x.creditLimit||0)}"></div>
+    <div class="field"><label>وسوم</label><input name="tags" value="${c.esc(x.tags||'')}" placeholder="VIP، جملة، متابعة"></div><div class="field"><label>حد ائتماني</label><input type="number" name="creditLimit" min="0" value="${Number(x.creditLimit||0)}"></div>${kind==='customers'?`<div class="field"><label>قائمة الأسعار</label><select name="pricelist"><option value="retail" ${(x.pricelist||'retail')==='retail'?'selected':''}>تجزئة</option><option value="wholesale" ${x.pricelist==='wholesale'?'selected':''}>جملة</option><option value="tiered" ${x.pricelist==='tiered'?'selected':''}>شرائح كمية</option></select></div><div class="field"><label>شروط الدفع</label><input name="paymentTerms" value="${c.esc(x.paymentTerms||c.db.settings.defaultPaymentTerms||'نقدي')}"></div>`:''}
     ${kind==='suppliers'?`<div class="field"><label>شروط الدفع</label><input name="terms" value="${c.esc(x.terms||'')}"></div>`:''}
     <div class="field full"><label>ملاحظات</label><textarea name="notes">${c.esc(x.notes||'')}</textarea></div>
   </div><div class="toolbar" style="margin-top:16px"><button class="btn primary">${c.icon('check',17)} حفظ</button><button type="button" class="btn" data-close>إلغاء</button></div></form>`;
@@ -155,8 +155,8 @@ function wireContacts(c,kind){
 function wireContactForm(c){
   const f=document.querySelector('#contactForm');if(!f)return;
   f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f),kind=f.dataset.kind,arr=kind==='customers'?c.db.customers:c.db.suppliers,id=f.dataset.id||c.uid(kind==='customers'?'c':'s'),old=arr.find(x=>x.id===id)||{};
-    const obj={id,companyId:c.db.session.companyId,name:fd.get('name'),phone:fd.get('phone'),email:fd.get('email'),governorate:fd.get('governorate'),address:fd.get('address'),taxId:fd.get('taxId'),notes:fd.get('notes'),terms:fd.get('terms')||'',tags:fd.get('tags'),creditLimit:Number(fd.get('creditLimit')||0),createdAt:old.createdAt||c.now()};
-    const ix=arr.findIndex(x=>x.id===id);if(ix>=0)arr[ix]=obj;else arr.push(obj);c.audit(ix>=0?'تعديل جهة اتصال':'إنشاء جهة اتصال',kind,obj.name);c.save('تم الحفظ');c.closeModal();c.render();
+    const obj={id,companyId:c.db.session.companyId,name:fd.get('name'),phone:fd.get('phone'),email:fd.get('email'),governorate:fd.get('governorate'),address:fd.get('address'),taxId:fd.get('taxId'),notes:fd.get('notes'),terms:fd.get('terms')||'',tags:fd.get('tags'),creditLimit:Number(fd.get('creditLimit')||0),pricelist:fd.get('pricelist')||old.pricelist||'retail',paymentTerms:fd.get('paymentTerms')||old.paymentTerms||c.db.settings.defaultPaymentTerms||'نقدي',createdAt:old.createdAt||c.now()};
+    const ix=arr.findIndex(x=>x.id===id);const before=ix>=0?c.clone(arr[ix]):null;if(ix>=0)arr[ix]=obj;else arr.push(obj);if(window.NBADV)NBADV.recordChange(c,kind,id,before,obj,ix>=0?'تعديل':'إنشاء');c.audit(ix>=0?'تعديل جهة اتصال':'إنشاء جهة اتصال',kind,obj.name);c.save('تم الحفظ');c.closeModal();c.render();
   };
 }
 
