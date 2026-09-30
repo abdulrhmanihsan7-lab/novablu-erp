@@ -99,7 +99,7 @@ function wireProductForm(c){
 }
 
 function customerMetrics(c,x){
-  const inv=c.db.invoices.filter(i=>i.customerId===x.id&&!i.deletedAt&&!['cancelled','returned'].includes(i.status));
+  const inv=c.db.invoices.filter(i=>i.customerId===x.id&&!i.deletedAt&&['confirmed','partial','paid'].includes(i.status));
   const total=inv.reduce((s,i)=>s+c.invTotals(i).total,0),paid=inv.reduce((s,i)=>s+c.invTotals(i).paid,0);
   return {inv,total,paid,due:Math.max(0,total-paid),last:inv.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0]};
 }
@@ -299,7 +299,7 @@ function returnPOS(c){
 
 function autoJournals(c){
   const out=[],acc=code=>c.db.accounts.find(a=>a.code===code)?.id;
-  c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt&&!['cancelled','returned'].includes(i.status)).forEach(i=>{
+  c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt&&['confirmed','partial','paid'].includes(i.status)).forEach(i=>{
     const t=c.invTotals(i),cost=(i.items||[]).reduce((s,x)=>s+Number(c.db.products.find(p=>p.id===x.productId)?.cost||0)*Number(x.qty||0),0);
     out.push({id:'auto-sale-'+i.id,number:'AUTO-'+i.number,date:i.date,memo:'مبيعات '+i.number,auto:true,lines:[{accountId:acc('1100'),debit:t.total,credit:0},{accountId:acc('4000'),debit:0,credit:t.total}]});
     if(t.paid>0)out.push({id:'auto-pay-'+i.id,number:'PAY-'+i.number,date:i.date,memo:'تحصيل '+i.number,auto:true,lines:[{accountId:acc('1000'),debit:t.paid,credit:0},{accountId:acc('1100'),debit:0,credit:t.paid}]});
@@ -318,7 +318,7 @@ function viewAccounting(c){
 
 function inRange(x,from,to){const d=String(x||'');return(!from||d>=from)&&(!to||d<=to)}
 function reportData(c){
-  const from=c.db.ui.reportFrom||'',to=c.db.ui.reportTo||'',inv=c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt&&!['cancelled','returned'].includes(i.status)&&inRange(i.date,from,to)),exp=c.db.expenses.filter(e=>e.companyId===c.db.session.companyId&&e.status==='paid'&&inRange(e.date,from,to));
+  const from=c.db.ui.reportFrom||'',to=c.db.ui.reportTo||'',inv=c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt&&['confirmed','partial','paid'].includes(i.status)&&inRange(i.date,from,to)),exp=c.db.expenses.filter(e=>e.companyId===c.db.session.companyId&&e.status==='paid'&&inRange(e.date,from,to));
   const sales=inv.reduce((s,i)=>s+c.invTotals(i).total,0),paid=inv.reduce((s,i)=>s+c.invTotals(i).paid,0),cost=inv.reduce((s,i)=>s+(i.items||[]).reduce((z,x)=>z+Number(c.db.products.find(p=>p.id===x.productId)?.cost||0)*Number(x.qty||0),0),0),expenses=exp.reduce((s,e)=>s+Number(e.amount||0),0),gross=sales-cost,net=gross-expenses;
   return {from,to,inv,exp,sales,paid,due:Math.max(0,sales-paid),cost,expenses,gross,net,avg:inv.length?sales/inv.length:0};
 }
