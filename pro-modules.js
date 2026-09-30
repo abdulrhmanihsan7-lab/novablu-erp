@@ -37,8 +37,8 @@ function viewCRM(c){
   let body='<div style="display:grid;grid-template-columns:repeat(5,minmax(230px,1fr));gap:12px;overflow:auto;padding-bottom:8px">';
   stages.forEach(st=>{
     const xs=leads.filter(x=>x.stage===st.id);
-    body+='<div class="card" style="margin:0;min-height:260px"><div class="card-head"><h3>'+st.name+'</h3><div class="grow"></div><span class="badge '+st.cls+'">'+xs.length+'</span></div>';
-    body+=xs.map(x=>'<div class="stat-row" style="align-items:flex-start"><div class="grow"><strong>'+c.esc(x.title)+'</strong><div class="sub">'+c.esc(x.customerName||'')+' • '+c.esc(x.phone||'')+'</div><div style="margin-top:7px;font-weight:800">'+c.fmt(x.value||0)+'</div><div class="sub" style="margin-top:4px">التالي: '+c.esc(x.nextAction||'—')+'</div></div><button class="btn sm" data-lead="'+x.id+'">فتح</button></div>').join('')||'<div class="empty">لا توجد فرص</div>';
+    body+='<div class="card crm-stage" data-crm-stage="'+st.id+'" style="margin:0;min-height:260px"><div class="card-head"><h3>'+st.name+'</h3><div class="grow"></div><span class="badge '+st.cls+'">'+xs.length+'</span></div>';
+    body+=xs.map(x=>'<div class="stat-row crm-lead-card" draggable="true" data-lead-drag="'+x.id+'" style="align-items:flex-start"><div class="grow"><strong>'+c.esc(x.title)+'</strong><div class="sub">'+c.esc(x.customerName||'')+' • '+c.esc(x.phone||'')+'</div><div style="margin-top:7px;font-weight:800">'+c.fmt(x.value||0)+'</div><div class="sub" style="margin-top:4px">التالي: '+c.esc(x.nextAction||'—')+'</div></div><button class="btn sm" data-lead="'+x.id+'">فتح</button></div>').join('')||'<div class="empty">لا توجد فرص</div>';
     body+='</div>';
   });
   body+='</div>';
@@ -120,6 +120,19 @@ function quick(c,type,id){
 }
 function wire(c,route){
  const db=c.db;
+ if(route==='crm'){
+   let dragging='';
+   document.querySelectorAll('[data-lead-drag]').forEach(el=>{
+     el.ondragstart=e=>{dragging=el.dataset.leadDrag;el.classList.add('dragging');if(e.dataTransfer)e.dataTransfer.effectAllowed='move'};
+     el.ondragend=()=>{el.classList.remove('dragging');document.querySelectorAll('[data-crm-stage]').forEach(x=>x.classList.remove('drag-over'))};
+   });
+   document.querySelectorAll('[data-crm-stage]').forEach(col=>{
+     col.ondragover=e=>{e.preventDefault();col.classList.add('drag-over')};
+     col.ondragleave=()=>col.classList.remove('drag-over');
+     col.ondrop=e=>{e.preventDefault();col.classList.remove('drag-over');const l=db.leads.find(x=>x.id===dragging);if(l&&l.stage!==col.dataset.crmStage){const old=l.stage;l.stage=col.dataset.crmStage;c.audit('نقل فرصة CRM','CRM',l.title+' '+old+' → '+l.stage);c.save('تم تحديث مرحلة الفرصة');c.render()}};
+   });
+ }
+
  const nl=document.querySelector('#newLead'); if(nl)nl.onclick=()=>quick(c,'lead');
  document.querySelectorAll('[data-lead]').forEach(b=>b.onclick=()=>quick(c,'lead',b.dataset.lead));
  const lf=document.querySelector('#leadForm'); if(lf)lf.onsubmit=e=>{e.preventDefault();const fd=new FormData(lf),id=lf.dataset.id||c.uid('lead'),o={id,companyId:db.session.companyId,title:fd.get('title'),customerName:fd.get('customerName'),phone:fd.get('phone'),value:Number(fd.get('value')||0),stage:fd.get('stage'),owner:fd.get('owner'),nextAction:fd.get('nextAction'),createdAt:(db.leads.find(x=>x.id===id)||{}).createdAt||c.now()};const ix=db.leads.findIndex(x=>x.id===id);if(ix>=0)db.leads[ix]=o;else db.leads.unshift(o);c.audit(ix>=0?'تعديل فرصة':'إنشاء فرصة','CRM',o.title);c.save('تم حفظ الفرصة');c.closeModal();c.render()};
