@@ -85,7 +85,7 @@ function enhanceTables(c){
 }
 function emptyStatePolish(c){document.querySelectorAll('.empty').forEach(x=>{if(x.dataset.uxEmpty)return;x.dataset.uxEmpty='1';if(!x.querySelector('.nb-icon'))x.insertAdjacentHTML('afterbegin',c.icon('file',24))})}
 function showProgress(){let p=document.querySelector('#uxProgress');if(!p){p=document.createElement('div');p.id='uxProgress';p.className='ux-progress';document.body.appendChild(p)}p.classList.add('run');setTimeout(()=>p.classList.remove('run'),360)}
-function postRender(c,route){migrate(c);addRecent(c,route);document.body.classList.toggle('reduce-motion',!!pref(c).reduceMotion);decoratePageHead(c,route);restoreFilters(c,route);enhanceForms(c);enhanceTables(c);emptyStatePolish(c);wireLiveSearch(c);if(route==='dashboard')wireDashboard(c);showProgress()}
+function postRender(c,route){migrate(c);addRecent(c,route);localStorage.setItem('novablu_erp_v1_free',JSON.stringify(c.db));document.body.classList.toggle('reduce-motion',!!pref(c).reduceMotion);decoratePageHead(c,route);restoreFilters(c,route);enhanceForms(c);enhanceTables(c);emptyStatePolish(c);wireLiveSearch(c);if(route==='dashboard')wireDashboard(c);showProgress()}
 function duplicateList(arr){const m={};arr.forEach(x=>{const k=String(x||'').trim().toLowerCase();if(k)m[k]=(m[k]||0)+1});return Object.entries(m).filter(x=>x[1]>1).map(x=>x[0])}
 function tests(c){
  const t=[],push=(name,ok,detail,area='Core')=>t.push({name,ok,detail:detail||'',area}),inv=c.db.invoices.filter(i=>!i.deletedAt),posted=inv.filter(i=>['confirmed','partial','paid'].includes(i.status));
