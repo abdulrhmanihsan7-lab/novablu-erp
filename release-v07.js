@@ -32,7 +32,7 @@ function wireProducts(c){
  document.querySelector('#printLabels')?.addEventListener('click',()=>printLabels(c))
 }
 function printLabels(c){
- const q=prompt('اكتب SKU مفصولة بفاصلة أو اتركه فارغاً لأول 20 منتج',''),want=(q||'').split(',').map(x=>x.trim()).filter(Boolean),arr=(want.length?c.db.products.filter(p=>want.includes(p.sku)):c.db.products.slice(0,20));if(!arr.length)return c.toast('لا توجد منتجات');const w=window.open('','_blank');if(!w)return c.toast('اسمح بالنوافذ المنبثقة');w.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>@page{margin:3mm}body{font-family:Arial;display:grid;grid-template-columns:repeat(3,50mm);gap:2mm}.l{width:50mm;height:30mm;border:1px solid #bbb;padding:3mm;box-sizing:border-box;text-align:center}.l b,.l small{display:block;margin:2px}</style></head><body>${arr.map(p=>`<div class="l"><strong>${c.esc(p.nameAr)}</strong><b>${c.fmt(p.price)}</b><small>${c.esc(p.barcode||p.sku)}</small></div>`).join('')}<script>onload=()=>print()<\/script></body></html>`);w.document.close()
+ const q=prompt('اكتب SKU مفصولة بفاصلة أو اتركه فارغاً لأول 20 منتج',''),want=(q||'').split(',').map(x=>x.trim()).filter(Boolean),arr=(want.length?c.db.products.filter(p=>want.includes(p.sku)):c.db.products.slice(0,20));if(!arr.length)return c.toast('لا توجد منتجات');if(window.NBBC)return NBBC.printLabels(c,arr);c.toast('وحدة الباركود غير متاحة')
 }
 
 function viewInventory(c){
