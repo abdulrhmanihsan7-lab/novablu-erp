@@ -51,7 +51,7 @@ function productCard(c,p){
     </div></article>`;
 }
 function productForm(c,id){
-  const p=id?c.db.products.find(x=>x.id===id):{id:'',nameAr:'',nameEn:'',image:'',brand:'',tags:'',sku:'',barcode:'',categoryId:'',unit:'قطعة',cost:0,price:0,wholesalePrice:0,price6:0,price12:0,price24:0,tax:c.db.settings.defaultTax||0,trackStock:true,reorder:0,minQty:1,supplierId:'',location:'',variants:[],active:true};
+  const p=id?c.db.products.find(x=>x.id===id):{id:'',nameAr:'',nameEn:'',image:'',brand:'',tags:'',sku:'',barcode:'',categoryId:'',unit:'قطعة',uoms:['قطعة'],cost:0,price:0,wholesalePrice:0,price6:0,price12:0,price24:0,tax:c.db.settings.defaultTax||0,trackStock:true,reorder:0,minQty:1,supplierId:'',location:'',variants:[],lotTracked:false,serialTracked:false,expiryTracked:false,active:true};
   return `<form id="productForm" data-id="${c.esc(p.id||'')}"><div class="product-form-head">${productImage(c,p,'lg')}<div class="grow"><h3>${p.id?'تعديل المنتج':'منتج جديد'}</h3><div class="sub">بيانات المنتج والتسعير والمخزون</div><input type="file" id="productImageFile" accept="image/*"><small class="sub">يفضل صورة خفيفة أقل من ${c.db.settings.productImageMaxKB||450}KB</small></div></div>
   <div class="form-grid">
     <div class="field"><label>الاسم العربي</label><input name="nameAr" value="${c.esc(p.nameAr)}" required></div><div class="field"><label>الاسم الإنجليزي</label><input name="nameEn" value="${c.esc(p.nameEn||'')}"></div>
@@ -65,7 +65,12 @@ function productForm(c,id){
     <div class="field"><label>حد إعادة الطلب</label><input type="number" name="reorder" min="0" value="${Number(p.reorder||0)}"></div><div class="field"><label>موقع الرف / التخزين</label><input name="location" value="${c.esc(p.location||'')}"></div>
     <div class="field"><label>المورد المفضل</label><select name="supplierId"><option value="">—</option>${c.db.suppliers.map(s=>`<option value="${s.id}" ${s.id===p.supplierId?'selected':''}>${c.esc(s.name)}</option>`).join('')}</select></div>
     <div class="field full"><label>المتغيرات</label><input name="variants" value="${c.esc((p.variants||[]).join(', '))}" placeholder="مثال: أسود، أبيض، M، L"></div>
-    <div class="field"><label class="switch"><input type="checkbox" name="trackStock" ${p.trackStock?'checked':''}> تتبع المخزون</label></div><div class="field"><label class="switch"><input type="checkbox" name="active" ${p.active?'checked':''}> نشط</label></div>
+    <div class="field full"><label>وحدات القياس</label><input name="uoms" value="${c.esc((p.uoms||[p.unit||'قطعة']).join(', '))}" placeholder="قطعة، كرتون، متر"></div>
+    <div class="field"><label class="switch"><input type="checkbox" name="trackStock" ${p.trackStock?'checked':''}> تتبع المخزون</label></div>
+    <div class="field"><label class="switch"><input type="checkbox" name="lotTracked" ${p.lotTracked?'checked':''}> تتبع Lot / Batch</label></div>
+    <div class="field"><label class="switch"><input type="checkbox" name="serialTracked" ${p.serialTracked?'checked':''}> تتبع Serial</label></div>
+    <div class="field"><label class="switch"><input type="checkbox" name="expiryTracked" ${p.expiryTracked?'checked':''}> تتبع الصلاحية</label></div>
+    <div class="field"><label class="switch"><input type="checkbox" name="active" ${p.active?'checked':''}> نشط</label></div>
   </div><div class="toolbar" style="margin-top:16px"><button class="btn primary">${c.icon('check',17)} حفظ المنتج</button><button type="button" class="btn" data-close>إلغاء</button></div></form>`;
 }
 async function imageToDataUrl(file,maxKB){
@@ -86,7 +91,7 @@ function wireProductForm(c){
   f.onsubmit=async e=>{
     e.preventDefault();const fd=new FormData(f),id=f.dataset.id||c.uid('p'),old=c.db.products.find(x=>x.id===id)||{},file=document.querySelector('#productImageFile')?.files?.[0];
     let image=old.image||'';if(file)image=await imageToDataUrl(file,c.db.settings.productImageMaxKB||450);
-    const p={id,companyId:c.db.session.companyId,nameAr:fd.get('nameAr'),nameEn:fd.get('nameEn'),image,brand:fd.get('brand'),tags:fd.get('tags'),sku:fd.get('sku'),barcode:fd.get('barcode'),categoryId:fd.get('categoryId'),unit:fd.get('unit'),cost:Number(fd.get('cost')||0),price:Number(fd.get('price')||0),wholesalePrice:Number(fd.get('wholesalePrice')||0),price6:Number(fd.get('price6')||0),price12:Number(fd.get('price12')||0),price24:Number(fd.get('price24')||0),tax:Number(fd.get('tax')||0),trackStock:fd.get('trackStock')==='on',reorder:Number(fd.get('reorder')||0),minQty:Number(fd.get('minQty')||1),supplierId:fd.get('supplierId'),location:fd.get('location'),variants:String(fd.get('variants')||'').split(',').map(x=>x.trim()).filter(Boolean),active:fd.get('active')==='on'};
+    const p={id,companyId:c.db.session.companyId,nameAr:fd.get('nameAr'),nameEn:fd.get('nameEn'),image,brand:fd.get('brand'),tags:fd.get('tags'),sku:fd.get('sku'),barcode:fd.get('barcode'),categoryId:fd.get('categoryId'),unit:fd.get('unit'),cost:Number(fd.get('cost')||0),price:Number(fd.get('price')||0),wholesalePrice:Number(fd.get('wholesalePrice')||0),price6:Number(fd.get('price6')||0),price12:Number(fd.get('price12')||0),price24:Number(fd.get('price24')||0),tax:Number(fd.get('tax')||0),trackStock:fd.get('trackStock')==='on',reorder:Number(fd.get('reorder')||0),minQty:Number(fd.get('minQty')||1),supplierId:fd.get('supplierId'),location:fd.get('location'),variants:String(fd.get('variants')||'').split(',').map(x=>x.trim()).filter(Boolean),uoms:String(fd.get('uoms')||fd.get('unit')||'قطعة').split(',').map(x=>x.trim()).filter(Boolean),lotTracked:fd.get('lotTracked')==='on',serialTracked:fd.get('serialTracked')==='on',expiryTracked:fd.get('expiryTracked')==='on',active:fd.get('active')==='on'};
     const ix=c.db.products.findIndex(x=>x.id===id);if(ix>=0)c.db.products[ix]=p;else c.db.products.push(p);
     c.audit(ix>=0?'تعديل منتج':'إنشاء منتج','Product',p.nameAr);c.save('تم حفظ المنتج');c.closeModal();c.render();
   };
@@ -241,7 +246,7 @@ function wirePOForm(c){
 function wirePOLines(){document.querySelectorAll('.remove-po-line').forEach(b=>b.onclick=()=>{if(document.querySelectorAll('#poLines tr').length>1)b.closest('tr').remove()})}
 function wireReceivePO(c){
   const f=document.querySelector('#receivePOForm');if(!f)return;f.onsubmit=e=>{e.preventDefault();const p=c.db.purchaseOrders.find(x=>x.id===f.dataset.id),date=new FormData(f).get('date');p.receivedByProduct=p.receivedByProduct||{};let add=0;
-    document.querySelectorAll('#receivePOForm tbody tr').forEach(tr=>{const pid=tr.dataset.pid,qty=Number(tr.querySelector('.receive-now')?.value||0);if(qty>0){p.receivedByProduct[pid]=poReceivedQty(p,pid)+qty;add+=qty;c.db.stockMoves.push({id:c.uid('sm'),companyId:p.companyId,warehouseId:p.warehouseId,productId:pid,type:'receipt',qty,date,ref:p.number,note:'استلام مشتريات'})}});
+    document.querySelectorAll('#receivePOForm tbody tr').forEach(tr=>{const pid=tr.dataset.pid,qty=Number(tr.querySelector('.receive-now')?.value||0);if(qty>0){const item=p.items.find(i=>i.productId===pid),prod=c.db.products.find(v=>v.id===pid),before=c.stock(pid,p.warehouseId),unitCost=Number(item?.cost||prod?.cost||0);if(prod&&before+qty>0)prod.cost=((Math.max(0,before)*Number(prod.cost||0))+(qty*unitCost))/(Math.max(0,before)+qty);p.receivedByProduct[pid]=poReceivedQty(p,pid)+qty;add+=qty;c.db.stockMoves.push({id:c.uid('sm'),companyId:p.companyId,warehouseId:p.warehouseId,productId:pid,type:'receipt',qty,unitCost,date,ref:p.number,note:'استلام مشتريات'})}});
     p.receivedQty=Object.values(p.receivedByProduct).reduce((s,x)=>s+Number(x||0),0);const ordered=p.items.reduce((s,x)=>s+Number(x.qty||0),0);if(p.receivedQty>=ordered)p.status='received';else if(p.receivedQty>0)p.status='approved';c.audit('استلام مشتريات','PurchaseOrder',p.number+' '+add);c.save('تم تسجيل الاستلام');c.closeModal();c.render();
   };
 }
