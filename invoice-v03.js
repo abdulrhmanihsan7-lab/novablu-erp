@@ -212,7 +212,7 @@ function invoiceCard(c,i){
 }
 function viewSales(c){
   const arr=c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-  const active=arr.filter(i=>!['cancelled','returned'].includes(i.status));
+  const active=arr.filter(i=>['confirmed','partial','paid'].includes(i.status));
   const total=active.reduce((s,i)=>s+c.invTotals(i).total,0);
   const due=active.reduce((s,i)=>s+c.invTotals(i).due,0);
   return c.pageHead('المبيعات والفواتير',`${arr.length} مستند`,`<button class="btn primary" data-q="invoice">${c.icon('plus',17)} فاتورة جديدة</button>`)+
