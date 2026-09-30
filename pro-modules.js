@@ -155,6 +155,8 @@ function wire(c,route){
 function approvalAction(c,id,status){
  const db=c.db,a=db.approvals.find(x=>x.id===id);if(!a)return;a.status=status;
  if(a.refType==='leave'){const l=db.leaveRequests.find(x=>x.id===a.refId);if(l)l.status=status}
+ if(a.refType==='purchase_order'){const p=db.purchaseOrders.find(x=>x.id===a.refId);if(p)p.status=status==='approved'?'approved':'draft'}
+ if(a.refType==='expense'){const e=db.expenses.find(x=>x.id===a.refId);if(e){if(status==='approved'){e.status='paid';if(!db.cashTransactions.some(t=>t.ref==='EXP-'+e.id))db.cashTransactions.push({id:c.uid('ct'),companyId:e.companyId,accountId:e.accountId,date:e.date,type:'out',amount:e.amount,ref:'EXP-'+e.id,note:e.category,createdAt:c.now()})}else e.status='draft'}}
  c.audit(status==='approved'?'اعتماد طلب':'رفض طلب','Approvals',a.title);c.save(status==='approved'?'تمت الموافقة':'تم الرفض');c.render();
 }
 window.NBPRO={migrate,viewCRM,viewQuotes,viewHR,viewApprovals,quick,wire};
