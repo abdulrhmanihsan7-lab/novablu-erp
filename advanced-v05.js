@@ -1,0 +1,215 @@
+(function(){
+'use strict';
+const STAGES={draft:'مسودة',approved:'معتمد',reserved:'محجوز',fulfilled:'منفذ',cancelled:'ملغي'};
+function migrate(c){
+ const d=c.db;d.meta=d.meta||{};d.meta.version=Math.max(Number(d.meta.version||1),5);
+ d.salesOrders=d.salesOrders||[];d.returns=d.returns||[];d.reservations=d.reservations||[];
+ d.lots=d.lots||[];d.serials=d.serials||[];d.changeHistory=d.changeHistory||[];
+ d.payrollRuns=d.payrollRuns||[];d.employeeLoans=d.employeeLoans||[];d.commissions=d.commissions||[];
+ d.automationRules=d.automationRules||[
+  {id:'r-low',type:'low_stock',name:'تنبيه المخزون المنخفض',enabled:true},
+  {id:'r-overdue',type:'overdue_invoice',name:'الفواتير المتأخرة',enabled:true},
+  {id:'r-credit',type:'credit_limit',name:'تجاوز الحد الائتماني',enabled:true},
+  {id:'r-supplier',type:'supplier_due',name:'استحقاقات الموردين',enabled:true}
+ ];
+ d.automationRuns=d.automationRuns||[];d.fiscalPeriods=d.fiscalPeriods||[];d.costCenters=d.costCenters||[];
+ d.integrationSettings=d.integrationSettings||{whatsapp:{enabled:false,phone:''},telegram:{enabled:false,chatId:''},webhook:{enabled:false,url:''},email:{enabled:false,from:''}};
+ d.security=d.security||{pinEnabled:false,pinHash:'',sessionMinutes:30,lockFinancialEdits:true,approvalLimit:1000000,lockDate:'',lastActivity:Date.now(),locked:false};
+ d.ui=d.ui||{};d.ui.favorites=d.ui.favorites||['dashboard','sales','inventory','reports'];
+ d.settings.modules=d.settings.modules||{};
+ ['workflows','automation','financepro','payroll','integrations','security','qa'].forEach(k=>{if(d.settings.modules[k]===undefined)d.settings.modules[k]=true});
+ (d.products||[]).forEach(p=>Object.assign(p,{uoms:p.uoms||['قطعة'],lotTracked:!!p.lotTracked,serialTracked:!!p.serialTracked,expiryTracked:!!p.expiryTracked}));
+ (d.customers||[]).forEach(x=>Object.assign(x,{paymentTerms:x.paymentTerms||d.settings.defaultPaymentTerms||'نقدي',pricelist:x.pricelist||'retail'}));
+}
+function hashText(t){let h=2166136261;for(let i=0;i<String(t).length;i++){h^=String(t).charCodeAt(i);h=Math.imul(h,16777619)}return('00000000'+(h>>>0).toString(16)).slice(-8)}
+function recordChange(c,entity,id,before,after,action='تعديل'){
+ c.db.changeHistory.unshift({id:c.uid('chg'),entity,entityId:id,action,before:c.clone(before||null),after:c.clone(after||null),userId:c.currentUser().id,createdAt:c.now()});
+ c.db.changeHistory=c.db.changeHistory.slice(0,1000);
+}
+function uniqueNo(c,prefix,collection,field='number'){
+ let n=1,no='';const used=new Set((collection||[]).map(x=>String(x[field]||'')));
+ do{no=prefix+'-'+String(n++).padStart(5,'0')}while(used.has(no));return no;
+}
+function reservedQty(c,pid,wid){
+ return c.db.reservations.filter(r=>r.productId===pid&&(!wid||r.warehouseId===wid)&&r.status==='active').reduce((s,r)=>s+Number(r.qty||0),0)
+}
+function availableStock(c,pid,wid){return c.stock(pid,wid)-reservedQty(c,pid,wid)}
+function quoteToOrder(c,qid){
+ const q=c.db.quotations.find(x=>x.id===qid);if(!q)return;
+ const exists=c.db.salesOrders.find(x=>x.quoteId===qid&&!['cancelled'].includes(x.status));if(exists){c.toast('يوجد أمر بيع مرتبط بهذا العرض');return}
+ const so={id:c.uid('so'),companyId:c.db.session.companyId,branchId:c.db.session.branchId,warehouseId:c.warehouse()?.id||'',number:uniqueNo(c,'SO',c.db.salesOrders),quoteId:q.id,date:c.today(),customerId:q.customerId,status:'draft',items:[{productId:'',name:'حسب عرض السعر '+q.number,qty:1,price:Number(q.amount||0),discount:0,tax:0}],shipping:0,discount:0,notes:q.notes||'',createdAt:c.now(),updatedAt:c.now()};
+ c.db.salesOrders.unshift(so);q.status='accepted';recordChange(c,'Quotation',q.id,q,{...q,status:'accepted'},'تحويل');c.audit('تحويل عرض سعر لأمر بيع','SalesOrder',so.number);c.save('تم إنشاء '+so.number);c.render()
+}
+function orderTotal(o){const sub=(o.items||[]).reduce((s,x)=>s+Number(x.qty||0)*Number(x.price||0)*(1-Number(x.discount||0)/100)*(1+Number(x.tax||0)/100),0);return Math.max(0,sub+Number(o.shipping||0)-Number(o.discount||0))}
+function reserveOrder(c,o){
+ if(!o||!['draft','approved'].includes(o.status))return;
+ const tracked=(o.items||[]).filter(x=>x.productId&&c.db.products.find(p=>p.id===x.productId)?.trackStock);
+ for(const x of tracked){if(availableStock(c,x.productId,o.warehouseId)<Number(x.qty||0)){c.toast('مخزون غير كافٍ لحجز '+(c.db.products.find(p=>p.id===x.productId)?.nameAr||''));return}}
+ tracked.forEach(x=>c.db.reservations.push({id:c.uid('res'),companyId:o.companyId,warehouseId:o.warehouseId,productId:x.productId,qty:Number(x.qty||0),refType:'sales_order',refId:o.id,status:'active',createdAt:c.now()}));
+ o.status='reserved';o.updatedAt=c.now();c.audit('حجز مخزون','SalesOrder',o.number);c.save('تم حجز المخزون');c.render()
+}
+function releaseReservations(c,oid){c.db.reservations.filter(r=>r.refId===oid&&r.status==='active').forEach(r=>r.status='released')}
+function orderToInvoice(c,oid){
+ const o=c.db.salesOrders.find(x=>x.id===oid);if(!o)return;if(o.status==='cancelled'){c.toast('أمر البيع ملغي');return}
+ const existing=c.db.invoices.find(i=>i.salesOrderId===oid&&!i.deletedAt);if(existing){c.quick('invoice',existing.id);return}
+ const no=c.db.settings.invoicePrefix+'-'+c.db.settings.nextInvoice++;
+ const inv={id:c.uid('inv'),companyId:o.companyId,branchId:o.branchId,warehouseId:o.warehouseId,number:no,date:c.today(),time:new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}),employee:c.currentUser().name,salesOrderId:o.id,customerId:o.customerId,status:'confirmed',items:c.clone(o.items),shipping:Number(o.shipping||0),discount:Number(o.discount||0),notes:o.notes||'',payments:[],createdAt:c.now(),deletedAt:null};
+ c.db.invoices.unshift(inv);releaseReservations(c,o.id);o.status='fulfilled';o.invoiceId=inv.id;o.updatedAt=c.now();
+ (inv.items||[]).forEach(x=>{const p=c.db.products.find(v=>v.id===x.productId);if(p?.trackStock)c.db.stockMoves.push({id:c.uid('sm'),companyId:o.companyId,warehouseId:o.warehouseId,productId:x.productId,type:'delivery',qty:Number(x.qty||0),date:c.today(),ref:no,note:'تنفيذ أمر بيع '+o.number})});
+ c.audit('تحويل أمر بيع إلى فاتورة','SalesOrder',o.number+' → '+no);c.save('تم إنشاء '+no);c.quick('invoice',inv.id)
+}
+function soForm(c,id){
+ const o=id?c.db.salesOrders.find(x=>x.id===id):{id:'',number:uniqueNo(c,'SO',c.db.salesOrders),date:c.today(),customerId:'',warehouseId:c.warehouse()?.id||'',status:'draft',items:[{productId:'',name:'',qty:1,price:0,discount:0,tax:0}],shipping:0,discount:0,notes:''};
+ return '<form id="soForm" data-id="'+c.esc(o.id||'')+'"><div class="form-grid"><div class="field"><label>رقم أمر البيع</label><input name="number" value="'+c.esc(o.number)+'"></div><div class="field"><label>التاريخ</label><input name="date" type="date" value="'+c.esc(o.date)+'"></div><div class="field"><label>العميل</label><select name="customerId"><option value="">—</option>'+c.db.customers.map(x=>'<option value="'+x.id+'" '+(x.id===o.customerId?'selected':'')+'>'+c.esc(x.name)+'</option>').join('')+'</select></div><div class="field"><label>المخزن</label><select name="warehouseId">'+c.db.warehouses.filter(w=>w.companyId===c.db.session.companyId).map(w=>'<option value="'+w.id+'" '+(w.id===o.warehouseId?'selected':'')+'>'+c.esc(w.name)+'</option>').join('')+'</select></div></div><div class="card inner-card"><div class="card-head"><h3>الأصناف</h3><div class="grow"></div><button class="btn sm" type="button" id="addSOLine">＋ سطر</button></div><div class="table-wrap"><table><thead><tr><th>المنتج</th><th>الكمية</th><th>السعر</th><th>خصم%</th><th></th></tr></thead><tbody id="soLines">'+(o.items||[]).map(x=>soLine(c,x)).join('')+'</tbody></table></div></div><div class="form-grid"><div class="field"><label>خصم مباشر</label><input name="discount" type="number" value="'+Number(o.discount||0)+'"></div><div class="field"><label>الشحن</label><input name="shipping" type="number" value="'+Number(o.shipping||0)+'"></div><div class="field full"><label>ملاحظات</label><textarea name="notes">'+c.esc(o.notes||'')+'</textarea></div></div><div class="toolbar"><button class="btn primary">حفظ</button><button class="btn" type="button" data-close>إلغاء</button></div></form>'
+}
+function soLine(c,x){x=Object.assign({productId:'',name:'',qty:1,price:0,discount:0,tax:0},x||{});return '<tr><td><select class="so-prod"><option value="">صنف يدوي</option>'+c.db.products.filter(p=>p.active).map(p=>'<option value="'+p.id+'" '+(p.id===x.productId?'selected':'')+'>'+c.esc(p.nameAr)+'</option>').join('')+'</select><input class="so-name" value="'+c.esc(x.name||'')+'" placeholder="اسم الصنف"></td><td><input class="so-qty" type="number" min=".01" step=".01" value="'+Number(x.qty||1)+'"></td><td><input class="so-price" type="number" min="0" value="'+Number(x.price||0)+'"></td><td><input class="so-discount" type="number" min="0" max="100" value="'+Number(x.discount||0)+'"></td><td><button class="btn red sm so-remove" type="button">×</button></td></tr>'}
+function viewWorkflows(c){
+ const orders=c.db.salesOrders.filter(x=>x.companyId===c.db.session.companyId).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)),quotes=(c.db.quotations||[]).filter(x=>x.companyId===c.db.session.companyId);
+ return c.pageHead('سير العمل التجاري','عرض سعر ← أمر بيع ← حجز مخزون ← فاتورة ← دفع / مرتجع','<button class="btn primary" id="newSO">＋ أمر بيع</button>')+
+ '<div class="advanced-flow">'+['عرض سعر','أمر بيع','حجز مخزون','فاتورة','دفع','مرتجع'].map((x,i)=>'<div><span>'+(i+1)+'</span><strong>'+x+'</strong></div>').join('<b>←</b>')+'</div>'+
+ '<div class="grid cards2"><div class="card"><div class="card-head"><h3>عروض جاهزة للتحويل</h3></div>'+(quotes.filter(q=>!['rejected','expired'].includes(q.status)).slice(0,12).map(q=>'<div class="stat-row"><div class="grow"><strong>'+c.esc(q.number)+'</strong><div class="sub">'+c.esc(c.db.customers.find(x=>x.id===q.customerId)?.name||'')+' • '+c.fmt(q.amount||0)+'</div></div>'+c.statusBadge(q.status)+'<button class="btn sm" data-quote-so="'+q.id+'">أمر بيع</button></div>').join('')||'<div class="empty">لا توجد عروض</div>')+'</div>'+
+ '<div class="card"><div class="card-head"><h3>مؤشرات</h3></div><div class="advanced-mini-kpis"><div><span>مسودة</span><strong>'+orders.filter(x=>x.status==='draft').length+'</strong></div><div><span>محجوز</span><strong>'+orders.filter(x=>x.status==='reserved').length+'</strong></div><div><span>منفذ</span><strong>'+orders.filter(x=>x.status==='fulfilled').length+'</strong></div><div><span>قيمة مفتوحة</span><strong>'+c.fmt(orders.filter(x=>!['fulfilled','cancelled'].includes(x.status)).reduce((s,x)=>s+orderTotal(x),0))+'</strong></div></div></div></div>'+
+ '<div class="card responsive-table"><div class="card-head"><h3>أوامر البيع</h3></div><div class="table-wrap"><table><thead><tr><th>الرقم</th><th>العميل</th><th>التاريخ</th><th>القيمة</th><th>الحالة</th><th>المخزون</th><th>إجراء</th></tr></thead><tbody>'+orders.map(o=>'<tr><td><strong>'+c.esc(o.number)+'</strong></td><td>'+c.esc(c.db.customers.find(x=>x.id===o.customerId)?.name||'—')+'</td><td>'+c.esc(o.date)+'</td><td>'+c.fmt(orderTotal(o))+'</td><td>'+c.statusBadge(o.status)+'</td><td>'+((o.items||[]).filter(x=>x.productId).every(x=>availableStock(c,x.productId,o.warehouseId)>=Number(x.qty||0))?'<span class="badge green">متوفر</span>':'<span class="badge amber">تحقق</span>')+'</td><td><div class="row-actions"><button class="btn sm" data-so-edit="'+o.id+'">فتح</button>'+(['draft','approved'].includes(o.status)?'<button class="btn sm outline" data-so-reserve="'+o.id+'">حجز</button>':'')+(!['fulfilled','cancelled'].includes(o.status)?'<button class="btn sm green" data-so-invoice="'+o.id+'">فاتورة</button>':'')+'</div></td></tr>').join('')+'</tbody></table></div></div>'
+}
+function wireSOForm(c){
+ const f=document.querySelector('#soForm');if(!f)return;
+ const wire=()=>{document.querySelectorAll('.so-remove').forEach(b=>b.onclick=()=>{if(document.querySelectorAll('#soLines tr').length>1)b.closest('tr').remove()});document.querySelectorAll('.so-prod').forEach(sel=>sel.onchange=()=>{const p=c.db.products.find(x=>x.id===sel.value),tr=sel.closest('tr');if(p){tr.querySelector('.so-name').value=p.nameAr;tr.querySelector('.so-price').value=p.price}})}
+ wire();document.querySelector('#addSOLine').onclick=()=>{document.querySelector('#soLines').insertAdjacentHTML('beforeend',soLine(c,{}));wire()};
+ f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f),id=f.dataset.id||c.uid('so'),old=c.db.salesOrders.find(x=>x.id===id),items=[...document.querySelectorAll('#soLines tr')].map(tr=>{const pid=tr.querySelector('.so-prod').value,p=c.db.products.find(x=>x.id===pid);return{productId:pid,name:tr.querySelector('.so-name').value||p?.nameAr||'صنف',qty:Number(tr.querySelector('.so-qty').value||0),price:Number(tr.querySelector('.so-price').value||0),discount:Number(tr.querySelector('.so-discount').value||0),tax:Number(p?.tax||0)}}).filter(x=>x.qty>0);const o={id,companyId:c.db.session.companyId,branchId:c.db.session.branchId,warehouseId:fd.get('warehouseId'),number:fd.get('number'),date:fd.get('date'),customerId:fd.get('customerId'),status:old?.status||'draft',items,shipping:Number(fd.get('shipping')||0),discount:Number(fd.get('discount')||0),notes:fd.get('notes')||'',createdAt:old?.createdAt||c.now(),updatedAt:c.now(),quoteId:old?.quoteId||'',invoiceId:old?.invoiceId||''};const ix=c.db.salesOrders.findIndex(x=>x.id===id);if(ix>=0)c.db.salesOrders[ix]=o;else c.db.salesOrders.unshift(o);recordChange(c,'SalesOrder',id,old,o,ix>=0?'تعديل':'إنشاء');c.audit(ix>=0?'تعديل أمر بيع':'إنشاء أمر بيع','SalesOrder',o.number);c.save('تم حفظ أمر البيع');c.closeModal();c.render()}
+}
+function wireWorkflows(c){
+ const n=document.querySelector('#newSO');if(n)n.onclick=()=>{c.openModal('أمر بيع جديد',soForm(c),true);setTimeout(()=>wireSOForm(c),0)};
+ document.querySelectorAll('[data-quote-so]').forEach(b=>b.onclick=()=>quoteToOrder(c,b.dataset.quoteSo));
+ document.querySelectorAll('[data-so-edit]').forEach(b=>b.onclick=()=>{c.openModal('أمر بيع',soForm(c,b.dataset.soEdit),true);setTimeout(()=>wireSOForm(c),0)});
+ document.querySelectorAll('[data-so-reserve]').forEach(b=>b.onclick=()=>reserveOrder(c,c.db.salesOrders.find(x=>x.id===b.dataset.soReserve)));
+ document.querySelectorAll('[data-so-invoice]').forEach(b=>b.onclick=()=>orderToInvoice(c,b.dataset.soInvoice))
+}
+function partialReturnForm(c,inv){
+ const returned={};c.db.returns.filter(r=>r.invoiceId===inv.id&&r.status==='done').forEach(r=>(r.items||[]).forEach(x=>returned[x.key]=(returned[x.key]||0)+Number(x.qty||0)));
+ return '<form id="partialReturnForm" data-id="'+inv.id+'"><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>مباع</th><th>مرتجع سابق</th><th>إرجاع الآن</th></tr></thead><tbody>'+(inv.items||[]).map((x,i)=>{const key=x.productId||('manual-'+i),rem=Math.max(0,Number(x.qty||0)-Number(returned[key]||0));return '<tr data-key="'+c.esc(key)+'" data-pid="'+c.esc(x.productId||'')+'"><td>'+c.esc(x.name)+'</td><td>'+x.qty+'</td><td>'+Number(returned[key]||0)+'</td><td><input class="ret-qty" type="number" min="0" max="'+rem+'" step=".01" value="0"></td></tr>'}).join('')+'</tbody></table></div><div class="field"><label>سبب المرتجع</label><input name="reason" required></div><div class="field"><label>طريقة الاسترداد</label><select name="refund"><option value="cash">نقدي</option><option value="credit">رصيد للعميل</option><option value="none">بدون استرداد</option></select></div><div class="toolbar"><button class="btn primary">تنفيذ المرتجع</button><button class="btn" type="button" data-close>إلغاء</button></div></form>'
+}
+function executePartialReturn(c,form){
+ const inv=c.db.invoices.find(x=>x.id===form.dataset.id);if(!inv)return;const fd=new FormData(form),items=[];let refund=0;
+ [...form.querySelectorAll('tbody tr')].forEach((tr,i)=>{const qty=Number(tr.querySelector('.ret-qty').value||0);if(qty<=0)return;const src=inv.items[i],unit=Number(src.price||0)*(1-Number(src.discount||0)/100)*(1+Number(src.tax||0)/100);items.push({key:tr.dataset.key,productId:tr.dataset.pid,name:src.name,qty,unit,amount:qty*unit});refund+=qty*unit});
+ if(!items.length){c.toast('حدد كمية للإرجاع');return}
+ const r={id:c.uid('ret'),companyId:inv.companyId,invoiceId:inv.id,number:uniqueNo(c,'RET',c.db.returns),date:c.today(),reason:fd.get('reason'),refundMethod:fd.get('refund'),items,total:refund,status:'done',createdAt:c.now()};c.db.returns.unshift(r);
+ items.forEach(x=>{const p=c.db.products.find(v=>v.id===x.productId);if(p?.trackStock)c.db.stockMoves.push({id:c.uid('sm'),companyId:inv.companyId,warehouseId:inv.warehouseId,productId:x.productId,type:'receipt',qty:x.qty,date:c.today(),ref:r.number,note:'مرتجع جزئي '+inv.number})});
+ if(fd.get('refund')==='cash'&&refund>0)c.db.cashTransactions.push({id:c.uid('ct'),companyId:inv.companyId,accountId:c.db.cashAccounts[0]?.id,date:c.today(),type:'out',amount:refund,ref:r.number,note:'استرداد مرتجع '+inv.number,createdAt:c.now()});
+ const sold=(inv.items||[]).reduce((s,x)=>s+Number(x.qty||0),0),allReturned=c.db.returns.filter(x=>x.invoiceId===inv.id&&x.status==='done').flatMap(x=>x.items).reduce((s,x)=>s+Number(x.qty||0),0);if(allReturned>=sold)inv.status='returned';
+ c.audit('مرتجع جزئي','Invoice',inv.number+' / '+r.number);c.save('تم تنفيذ '+r.number);c.closeModal();c.render()
+}
+function openPartialReturn(c,invId){const inv=c.db.invoices.find(x=>x.id===invId);if(!inv)return;c.openModal('مرتجع جزئي — '+inv.number,partialReturnForm(c,inv),true);setTimeout(()=>{const f=document.querySelector('#partialReturnForm');if(f)f.onsubmit=e=>{e.preventDefault();executePartialReturn(c,f)}},0)}
+
+function ruleKey(type,id=''){return type+'|'+id+'|'+new Date().toISOString().slice(0,10)}
+function alreadyRun(c,key){return c.db.automationRuns.some(x=>x.key===key)}
+function markRun(c,key,msg){c.db.automationRuns.unshift({id:c.uid('ar'),key,msg,createdAt:c.now()});c.db.automationRuns=c.db.automationRuns.slice(0,500)}
+function runAutomations(c,manual=false){
+ let hits=0;const enabled=t=>c.db.automationRules.find(r=>r.type===t)?.enabled!==false;
+ if(enabled('low_stock'))c.db.products.filter(p=>p.trackStock&&p.active&&availableStock(c,p.id)<=Number(p.reorder||0)).forEach(p=>{const k=ruleKey('low',p.id);if(!alreadyRun(c,k)){c.notify('مخزون منخفض',p.nameAr+' — المتاح '+availableStock(c,p.id),'stock');markRun(c,k,p.nameAr);hits++}});
+ if(enabled('overdue_invoice'))c.db.invoices.filter(i=>!i.deletedAt&&!['paid','cancelled','returned'].includes(i.status)&&c.invTotals(i).due>0&&i.date<new Date(Date.now()-14*86400000).toISOString().slice(0,10)).forEach(i=>{const k=ruleKey('due',i.id);if(!alreadyRun(c,k)){c.notify('فاتورة تحتاج متابعة',i.number+' — '+c.fmt(c.invTotals(i).due),'invoice');markRun(c,k,i.number);hits++}});
+ if(enabled('credit_limit'))c.db.customers.filter(x=>Number(x.creditLimit||0)>0).forEach(x=>{const due=c.db.invoices.filter(i=>i.customerId===x.id&&!i.deletedAt&&!['cancelled','returned'].includes(i.status)).reduce((s,i)=>s+c.invTotals(i).due,0);if(due>Number(x.creditLimit)){const k=ruleKey('credit',x.id);if(!alreadyRun(c,k)){c.notify('تجاوز حد ائتماني',x.name+' — '+c.fmt(due),'credit');markRun(c,k,x.name);hits++}}});
+ if(enabled('supplier_due'))c.db.purchaseOrders.filter(p=>p.dueDate&&p.dueDate<=c.today()&&['received','approved','closed'].includes(p.status)).forEach(p=>{const total=(p.items||[]).reduce((s,x)=>s+x.qty*x.cost,0),paid=(p.payments||[]).reduce((s,x)=>s+Number(x.amount||0),0);if(total>paid){const k=ruleKey('supplier',p.id);if(!alreadyRun(c,k)){c.notify('استحقاق مورد',p.number+' — '+c.fmt(total-paid),'supplier');markRun(c,k,p.number);hits++}}});
+ if(manual)c.toast(hits?'تم إنشاء '+hits+' تنبيه جديد':'لا توجد تنبيهات جديدة');return hits
+}
+function viewAutomation(c){
+ return c.pageHead('مركز الأتمتة','قواعد تعمل على البيانات وتولد تنبيهات ذكية','<button class="btn primary" id="runAutomation">تشغيل الفحص الآن</button>')+
+ '<div class="automation-grid">'+c.db.automationRules.map(r=>'<label class="automation-card"><div class="automation-icon">'+c.icon(r.type==='low_stock'?'inventory':r.type==='overdue_invoice'?'sales':r.type==='credit_limit'?'customers':'purchasing',22)+'</div><div class="grow"><strong>'+c.esc(r.name)+'</strong><small>'+c.esc(r.type)+'</small></div><input type="checkbox" data-rule="'+r.id+'" '+(r.enabled?'checked':'')+'></label>').join('')+'</div>'+
+ '<div class="card"><div class="card-head"><h3>آخر عمليات الأتمتة</h3></div>'+(c.db.automationRuns.slice(0,25).map(x=>'<div class="stat-row"><div class="grow"><strong>'+c.esc(x.msg||x.key)+'</strong><div class="sub">'+new Date(x.createdAt).toLocaleString('ar-IQ')+'</div></div><span class="badge green">تم</span></div>').join('')||'<div class="empty">لم يتم تشغيل القواعد بعد</div>')+'</div>'
+}
+function wireAutomation(c){const b=document.querySelector('#runAutomation');if(b)b.onclick=()=>{runAutomations(c,true);c.save();c.render()};document.querySelectorAll('[data-rule]').forEach(x=>x.onchange=()=>{const r=c.db.automationRules.find(v=>v.id===x.dataset.rule);if(r)r.enabled=x.checked;c.save('تم تحديث القاعدة')})}
+
+function allAccounting(c){return [...(c.db.journals||[]),...(window.NBHYPER?.autoJournals?NBHYPER.autoJournals(c):[])]}
+function accountBalances(c){const b={};c.db.accounts.forEach(a=>b[a.id]=0);allAccounting(c).forEach(j=>(j.lines||[]).forEach(l=>b[l.accountId]=(b[l.accountId]||0)+Number(l.debit||0)-Number(l.credit||0)));return b}
+function agingBuckets(days){if(days<=30)return '0–30';if(days<=60)return '31–60';if(days<=90)return '61–90';return '90+'}
+function viewFinancePro(c){
+ const bal=accountBalances(c),types=t=>c.db.accounts.filter(a=>a.type===t).reduce((s,a)=>s+(bal[a.id]||0),0),assets=types('asset'),liab=-types('liability'),income=-types('income'),expense=types('expense'),equity=assets-liab;
+ const aging={};['0–30','31–60','61–90','90+'].forEach(k=>aging[k]=0);c.db.invoices.filter(i=>!i.deletedAt&&!['paid','cancelled','returned'].includes(i.status)).forEach(i=>{const due=c.invTotals(i).due;if(!due)return;const days=Math.max(0,Math.floor((Date.now()-new Date(i.date).getTime())/86400000));aging[agingBuckets(days)]+=due});
+ const cashIn=c.db.cashTransactions.filter(x=>x.type==='in').reduce((s,x)=>s+Number(x.amount||0),0),cashOut=c.db.cashTransactions.filter(x=>x.type==='out').reduce((s,x)=>s+Number(x.amount||0),0);
+ return c.pageHead('التحليل المالي','P&L + مركز مالي + تدفق نقدي + أعمار الذمم')+
+ '<div class="advanced-fin-grid"><div class="advanced-fin-card"><span>الإيرادات</span><strong>'+c.fmt(income)+'</strong></div><div class="advanced-fin-card"><span>المصروفات</span><strong>'+c.fmt(expense)+'</strong></div><div class="advanced-fin-card"><span>صافي النتيجة</span><strong class="'+(income-expense>=0?'good-text':'danger-text')+'">'+c.fmt(income-expense)+'</strong></div><div class="advanced-fin-card"><span>صافي النقد</span><strong>'+c.fmt(cashIn-cashOut)+'</strong></div></div>'+
+ '<div class="grid cards2"><div class="card"><div class="card-head"><h3>المركز المالي التشغيلي</h3></div><div class="statement-row"><span>الأصول</span><strong>'+c.fmt(assets)+'</strong></div><div class="statement-row"><span>الالتزامات</span><strong>'+c.fmt(liab)+'</strong></div><div class="statement-row total"><span>صافي الأصول</span><strong>'+c.fmt(equity)+'</strong></div><div class="notice amber">قراءة إدارية تشغيلية وليست قوائم مالية قانونية مدققة.</div></div><div class="card"><div class="card-head"><h3>أعمار ذمم العملاء</h3></div>'+Object.entries(aging).map(([k,v])=>'<div class="statement-row"><span>'+k+' يوم</span><strong>'+c.fmt(v)+'</strong></div>').join('')+'</div></div>'+
+ '<div class="card"><div class="card-head"><h3>التدفق النقدي</h3></div><div class="cashflow-bars"><div><span>داخل</span><b style="width:'+Math.min(100,cashIn/Math.max(cashIn,cashOut,1)*100)+'%"></b><strong>'+c.fmt(cashIn)+'</strong></div><div><span>خارج</span><b style="width:'+Math.min(100,cashOut/Math.max(cashIn,cashOut,1)*100)+'%"></b><strong>'+c.fmt(cashOut)+'</strong></div></div></div>'
+}
+
+function payrollTotal(run){return (run.lines||[]).reduce((s,x)=>s+Number(x.net||0),0)}
+function viewPayroll(c){
+ const active=c.db.employees.filter(x=>x.companyId===c.db.session.companyId&&x.status==='active');
+ return c.pageHead('الرواتب والموظفون','رواتب، سلف وعمولات','<button class="btn primary" id="newPayroll">إنشاء مسير راتب</button>')+
+ '<div class="advanced-fin-grid"><div class="advanced-fin-card"><span>الموظفون النشطون</span><strong>'+active.length+'</strong></div><div class="advanced-fin-card"><span>رواتب أساسية</span><strong>'+c.fmt(active.reduce((s,x)=>s+Number(x.salary||0),0))+'</strong></div><div class="advanced-fin-card"><span>السلف المفتوحة</span><strong>'+c.fmt(c.db.employeeLoans.filter(x=>x.status==='open').reduce((s,x)=>s+Number(x.balance||0),0))+'</strong></div><div class="advanced-fin-card"><span>عمولات غير مدفوعة</span><strong>'+c.fmt(c.db.commissions.filter(x=>!x.paid).reduce((s,x)=>s+Number(x.amount||0),0))+'</strong></div></div>'+
+ '<div class="grid cards2"><div class="card"><div class="card-head"><h3>مسيرات الرواتب</h3></div>'+(c.db.payrollRuns.slice().reverse().map(r=>'<div class="stat-row"><div class="grow"><strong>'+c.esc(r.period)+'</strong><div class="sub">'+c.esc(r.status)+' • '+(r.lines||[]).length+' موظف</div></div><strong>'+c.fmt(payrollTotal(r))+'</strong></div>').join('')||'<div class="empty">لا توجد مسيرات</div>')+'</div><div class="card"><div class="card-head"><h3>سلف الموظفين</h3><button class="btn sm" id="newLoan">＋ سلفة</button></div>'+(c.db.employeeLoans.slice().reverse().slice(0,15).map(x=>'<div class="stat-row"><div class="grow"><strong>'+c.esc(c.db.employees.find(e=>e.id===x.employeeId)?.name||'')+'</strong><div class="sub">'+c.esc(x.date)+' • '+c.esc(x.status)+'</div></div><strong>'+c.fmt(x.balance)+'</strong></div>').join('')||'<div class="empty">لا توجد سلف</div>')+'</div></div>'
+}
+function createPayroll(c){
+ const period=prompt('فترة الراتب','2026-09');if(!period)return;if(c.db.payrollRuns.some(x=>x.period===period)){c.toast('الفترة موجودة مسبقاً');return}
+ const lines=c.db.employees.filter(x=>x.companyId===c.db.session.companyId&&x.status==='active').map(e=>{const loan=c.db.employeeLoans.filter(x=>x.employeeId===e.id&&x.status==='open').reduce((s,x)=>s+Number(x.installment||0),0),comm=c.db.commissions.filter(x=>x.employeeId===e.id&&!x.paid).reduce((s,x)=>s+Number(x.amount||0),0);return{employeeId:e.id,basic:Number(e.salary||0),allowances:comm,deductions:loan,net:Math.max(0,Number(e.salary||0)+comm-loan)}});c.db.payrollRuns.push({id:c.uid('payrun'),companyId:c.db.session.companyId,period,status:'draft',lines,createdAt:c.now()});c.audit('إنشاء مسير راتب','Payroll',period);c.save('تم إنشاء المسير');c.render()
+}
+function newLoan(c){const empId=prompt('أدخل ID الموظف (من شاشة الموارد البشرية)');if(!empId||!c.db.employees.find(x=>x.id===empId)){c.toast('الموظف غير موجود');return}const amount=Number(prompt('مبلغ السلفة','0')||0);if(amount<=0)return;const installment=Number(prompt('الاستقطاع الشهري','0')||0);c.db.employeeLoans.push({id:c.uid('loan'),employeeId:empId,amount,balance:amount,installment,date:c.today(),status:'open'});c.audit('سلفة موظف','Payroll',empId+' '+amount);c.save('تم تسجيل السلفة');c.render()}
+function wirePayroll(c){const p=document.querySelector('#newPayroll');if(p)p.onclick=()=>createPayroll(c);const l=document.querySelector('#newLoan');if(l)l.onclick=()=>newLoan(c)}
+
+async function mirrorIndexedDB(c){
+ if(!('indexedDB'in window))return false;return new Promise(resolve=>{const req=indexedDB.open('NovaBluERP',1);req.onupgradeneeded=()=>{const d=req.result;if(!d.objectStoreNames.contains('snapshots'))d.createObjectStore('snapshots',{keyPath:'key'})};req.onerror=()=>resolve(false);req.onsuccess=()=>{const d=req.result,tx=d.transaction('snapshots','readwrite');tx.objectStore('snapshots').put({key:'latest',savedAt:Date.now(),data:c.clone(c.db)});tx.oncomplete=()=>{d.close();resolve(true)};tx.onerror=()=>resolve(false)}})
+}
+async function restoreIndexedDB(c){
+ if(!('indexedDB'in window))return null;return new Promise(resolve=>{const req=indexedDB.open('NovaBluERP',1);req.onerror=()=>resolve(null);req.onsuccess=()=>{const d=req.result;if(!d.objectStoreNames.contains('snapshots')){d.close();resolve(null);return}const tx=d.transaction('snapshots','readonly'),g=tx.objectStore('snapshots').get('latest');g.onsuccess=()=>{d.close();resolve(g.result||null)};g.onerror=()=>resolve(null)}})
+}
+function viewSecurity(c){
+ const s=c.db.security,dups=duplicateNumbers(c);
+ return c.pageHead('الأمان والتحكم','حماية محلية، قفل الفترات، حدود الموافقات، ونسخ IndexedDB')+
+ '<div class="grid cards2"><div class="card"><div class="card-head"><h3>أمان الجهاز</h3></div><form id="securityForm"><div class="form-grid"><div class="field"><label class="switch"><input name="pinEnabled" type="checkbox" '+(s.pinEnabled?'checked':'')+'> تفعيل PIN محلي</label></div><div class="field"><label>PIN جديد</label><input name="pin" inputmode="numeric" maxlength="8" placeholder="اتركه فارغاً للإبقاء الحالي"></div><div class="field"><label>قفل بعد (دقيقة)</label><input name="sessionMinutes" type="number" min="1" max="480" value="'+Number(s.sessionMinutes||30)+'"></div><div class="field"><label>قفل التعديل المالي</label><select name="lockFinancialEdits"><option value="yes" '+(s.lockFinancialEdits?'selected':'')+'>نعم</option><option value="no" '+(!s.lockFinancialEdits?'selected':'')+'>لا</option></select></div><div class="field"><label>حد الموافقة</label><input name="approvalLimit" type="number" min="0" value="'+Number(s.approvalLimit||0)+'"></div><div class="field"><label>قفل العمليات حتى تاريخ</label><input name="lockDate" type="date" value="'+c.esc(s.lockDate||'')+'"></div></div><button class="btn primary">حفظ الأمان</button></form></div>'+
+ '<div class="card"><div class="card-head"><h3>سلامة البيانات</h3></div><div class="statement-row"><span>أرقام فواتير مكررة</span><strong class="'+(dups.invoices.length?'danger-text':'good-text')+'">'+dups.invoices.length+'</strong></div><div class="statement-row"><span>SKU مكرر</span><strong class="'+(dups.skus.length?'danger-text':'good-text')+'">'+dups.skus.length+'</strong></div><div class="statement-row"><span>سجل التغييرات</span><strong>'+c.db.changeHistory.length+'</strong></div><div class="toolbar"><button class="btn outline" id="mirrorNow">حفظ Snapshot محلي</button><button class="btn outline" id="restoreMirror">استعادة آخر Snapshot</button><button class="btn red" id="lockNow">قفل الآن</button></div></div></div>'+
+ '<div class="card"><div class="card-head"><h3>آخر تغييرات مهمة</h3></div>'+(c.db.changeHistory.slice(0,30).map(x=>'<div class="stat-row"><div class="grow"><strong>'+c.esc(x.action)+' — '+c.esc(x.entity)+'</strong><div class="sub">'+new Date(x.createdAt).toLocaleString('ar-IQ')+' • '+c.esc(c.db.users.find(u=>u.id===x.userId)?.name||'')</div></div><span class="badge gray">'+c.esc(x.entityId)+'</span></div>').join('')||'<div class="empty">لا توجد تغييرات مسجلة</div>')+'</div>'
+}
+function duplicateNumbers(c){const dup=a=>{const m={};a.forEach(x=>{const k=String(x||'').trim();if(k)m[k]=(m[k]||0)+1});return Object.entries(m).filter(x=>x[1]>1).map(x=>x[0])};return{invoices:dup(c.db.invoices.filter(i=>!i.deletedAt).map(i=>i.number)),skus:dup(c.db.products.map(p=>p.sku))}}
+function wireSecurity(c){
+ const f=document.querySelector('#securityForm');if(f)f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f),pin=String(fd.get('pin')||'');c.db.security.pinEnabled=fd.get('pinEnabled')==='on';if(pin)c.db.security.pinHash=hashText(pin);c.db.security.sessionMinutes=Number(fd.get('sessionMinutes')||30);c.db.security.lockFinancialEdits=fd.get('lockFinancialEdits')==='yes';c.db.security.approvalLimit=Number(fd.get('approvalLimit')||0);c.db.security.lockDate=fd.get('lockDate')||'';c.audit('تحديث إعدادات الأمان','Security','');c.save('تم حفظ الأمان');c.render()};
+ const m=document.querySelector('#mirrorNow');if(m)m.onclick=async()=>c.toast(await mirrorIndexedDB(c)?'تم حفظ Snapshot محلي':'تعذر الحفظ');
+ const r=document.querySelector('#restoreMirror');if(r)r.onclick=async()=>{const x=await restoreIndexedDB(c);if(!x){c.toast('لا توجد نسخة');return}if(confirm('استعادة Snapshot بتاريخ '+new Date(x.savedAt).toLocaleString('ar-IQ')+'؟')){Object.keys(c.db).forEach(k=>delete c.db[k]);Object.assign(c.db,x.data);migrate(c);c.save('تمت الاستعادة');c.render()}};
+ const l=document.querySelector('#lockNow');if(l)l.onclick=()=>{c.db.security.locked=true;c.save();showLock(c)}
+}
+function showLock(c){
+ if(!c.db.security.pinEnabled)return;c.db.security.locked=true;
+ let root=document.querySelector('#nbLock');if(!root){root=document.createElement('div');root.id='nbLock';document.body.appendChild(root)}
+ root.innerHTML='<div class="advanced-lock"><div class="lock-logo">N</div><h2>NovaBlu ERP مقفل</h2><p>أدخل PIN المحلي للمتابعة</p><input id="lockPin" type="password" inputmode="numeric" maxlength="8" autofocus><button class="btn primary" id="unlockBtn">فتح النظام</button><small>هذا قفل محلي للجهاز، وليس بديلاً عن تسجيل دخول سحابي.</small></div>';
+ document.querySelector('#unlockBtn').onclick=()=>{const v=document.querySelector('#lockPin').value;if(hashText(v)===c.db.security.pinHash){c.db.security.locked=false;c.db.security.lastActivity=Date.now();c.save();root.remove()}else c.toast('PIN غير صحيح')};document.querySelector('#lockPin').onkeydown=e=>{if(e.key==='Enter')document.querySelector('#unlockBtn').click()}
+}
+function sessionTick(c){const s=c.db.security;if(!s?.pinEnabled)return;const mins=(Date.now()-Number(s.lastActivity||Date.now()))/60000;if(s.locked||mins>=Number(s.sessionMinutes||30))showLock(c)}
+function noteActivity(c){if(c.db.security){c.db.security.lastActivity=Date.now();if(!c.db.security.locked)localStorage.setItem('novablu_last_activity',String(c.db.security.lastActivity))}}
+
+function viewIntegrations(c){
+ const x=c.db.integrationSettings;
+ return c.pageHead('التكاملات','تهيئة قنوات الربط قبل توصيل الخدمات الفعلية')+'<div class="integration-grid">'+
+ integrationCard(c,'whatsapp','WhatsApp','رقم الإرسال',x.whatsapp.phone,x.whatsapp.enabled)+integrationCard(c,'telegram','Telegram','Chat ID',x.telegram.chatId,x.telegram.enabled)+integrationCard(c,'webhook','Webhooks','Endpoint URL',x.webhook.url,x.webhook.enabled)+integrationCard(c,'email','Email','From',x.email.from,x.email.enabled)+'</div><div class="notice amber">الاتصالات الخارجية لا تُفعّل تلقائياً بدون API/حسابات مصرح بها. هذه الشاشة تحفظ الإعدادات وتجهز بنية الربط فقط.</div>'
+}
+function integrationCard(c,key,title,label,val,en){return '<form class="integration-card" data-integration="'+key+'"><div class="integration-title">'+c.icon(key==='whatsapp'?'customers':key==='telegram'?'notifications':key==='webhook'?'data':'file',22)+'<strong>'+title+'</strong><label class="switch"><input name="enabled" type="checkbox" '+(en?'checked':'')+'> فعال</label></div><div class="field"><label>'+label+'</label><input name="value" value="'+c.esc(val||'')+'"></div><button class="btn outline">حفظ</button></form>'}
+function wireIntegrations(c){document.querySelectorAll('[data-integration]').forEach(f=>f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f),k=f.dataset.integration,target=c.db.integrationSettings[k];target.enabled=fd.get('enabled')==='on';if(k==='whatsapp')target.phone=fd.get('value');if(k==='telegram')target.chatId=fd.get('value');if(k==='webhook')target.url=fd.get('value');if(k==='email')target.from=fd.get('value');c.audit('تحديث تكامل','Integration',k);c.save('تم حفظ '+k)})}
+
+function qaTests(c){
+ const tests=[],push=(name,ok,detail)=>tests.push({name,ok,detail});
+ const dup=duplicateNumbers(c);push('أرقام الفواتير فريدة',dup.invoices.length===0,dup.invoices.join(', ')||'سليم');push('SKU فريد',dup.skus.length===0,dup.skus.join(', ')||'سليم');
+ const orphanInv=c.db.invoices.flatMap(i=>(i.items||[]).filter(x=>x.productId&&!c.db.products.some(p=>p.id===x.productId)).map(x=>i.number));push('لا توجد أصناف يتيمة في الفواتير',orphanInv.length===0,orphanInv.slice(0,5).join(', ')||'سليم');
+ const neg=c.db.products.filter(p=>p.trackStock&&c.db.warehouses.some(w=>availableStock(c,p.id,w.id)<0));push('لا يوجد مخزون متاح سالب',neg.length===0,neg.map(x=>x.nameAr).slice(0,5).join(', ')||'سليم');
+ const badJ=allAccounting(c).filter(j=>Math.abs((j.lines||[]).reduce((s,l)=>s+Number(l.debit||0)-Number(l.credit||0),0))>.01);push('القيود متوازنة',badJ.length===0,badJ.map(x=>x.number).slice(0,5).join(', ')||'سليم');
+ const overpay=c.db.invoices.filter(i=>c.invTotals(i).paid>c.invTotals(i).total+.01);push('لا توجد دفعات أكبر من الفاتورة',overpay.length===0,overpay.map(x=>x.number).slice(0,5).join(', ')||'سليم');
+ const badPO=c.db.purchaseOrders.filter(p=>(p.payments||[]).reduce((s,x)=>s+Number(x.amount||0),0)>(p.items||[]).reduce((s,x)=>s+x.qty*x.cost,0)+.01);push('لا توجد دفعات موردين زائدة',badPO.length===0,badPO.map(x=>x.number).slice(0,5).join(', ')||'سليم');
+ return tests
+}
+function viewQA(c){const t=qaTests(c),ok=t.filter(x=>x.ok).length;return c.pageHead('فحص الجودة QA','اختبارات سلامة البيانات والمنطق','<button class="btn primary" id="runQA">إعادة الفحص</button>')+'<div class="qa-score"><div><strong>'+ok+'/'+t.length+'</strong><span>اختبار ناجح</span></div><b style="--p:'+(ok/t.length*100)+'%"></b></div><div class="qa-grid">'+t.map(x=>'<div class="qa-test '+(x.ok?'pass':'fail')+'"><span>'+c.icon(x.ok?'check':'trash',20)+'</span><div class="grow"><strong>'+c.esc(x.name)+'</strong><small>'+c.esc(x.detail)+'</small></div><b>'+(x.ok?'PASS':'CHECK')+'</b></div>').join('')+'</div><div class="notice">الـQA هنا يفحص سلامة البيانات محلياً. اختبارات الخادم، التزامن، الاختراق والضغط تحتاج Backend حقيقي في مرحلة Cloud.</div>'}
+function wireQA(c){const b=document.querySelector('#runQA');if(b)b.onclick=()=>{c.db.qaRuns=c.db.qaRuns||[];const t=qaTests(c);c.db.qaRuns.unshift({id:c.uid('qa'),at:c.now(),passed:t.filter(x=>x.ok).length,total:t.length});c.audit('تشغيل QA','System',t.filter(x=>x.ok).length+'/'+t.length);c.save('اكتمل الفحص');c.render()}}
+
+function commandItems(c){const routes=[['dashboard','لوحة التحكم'],['sales','الفواتير'],['workflows','سير العمل'],['quotes','عروض الأسعار'],['crm','CRM'],['pos','نقطة البيع'],['products','المنتجات'],['inventory','المخزون'],['purchasing','المشتريات'],['reports','التقارير'],['financepro','التحليل المالي'],['hr','الموارد البشرية'],['payroll','الرواتب'],['automation','الأتمتة'],['security','الأمان'],['qa','QA'],['settings','الإعدادات']];return routes.map(x=>({type:'route',id:x[0],title:x[1]})).concat(c.db.products.slice(0,100).map(x=>({type:'product',id:x.id,title:x.nameAr,sub:x.sku})),c.db.customers.slice(0,100).map(x=>({type:'customer',id:x.id,title:x.name,sub:x.phone})),c.db.invoices.filter(x=>!x.deletedAt).slice(0,100).map(x=>({type:'invoice',id:x.id,title:x.number,sub:x.customerSnapshot?.name||c.db.customers.find(v=>v.id===x.customerId)?.name||''})))}
+function showCommand(c){
+ let root=document.querySelector('#commandRoot');if(!root){root=document.createElement('div');root.id='commandRoot';document.body.appendChild(root)}
+ const all=commandItems(c);root.innerHTML='<div class="command-overlay"><div class="command-box"><div class="command-input">'+c.icon('search',20)+'<input id="cmdInput" placeholder="اكتب للانتقال أو البحث..." autofocus><kbd>ESC</kbd></div><div id="cmdResults"></div></div></div>';
+ const draw=q=>{q=(q||'').toLowerCase();const arr=all.filter(x=>(x.title+' '+(x.sub||'')).toLowerCase().includes(q)).slice(0,12);document.querySelector('#cmdResults').innerHTML=arr.map((x,i)=>'<button data-cmd-type="'+x.type+'" data-cmd-id="'+x.id+'" '+(i===0?'class="selected"':'')+'><span>'+c.icon(x.type==='route'?'chevron':x.type==='product'?'products':x.type==='customer'?'customers':'sales',18)+'</span><div><strong>'+c.esc(x.title)+'</strong><small>'+c.esc(x.sub||x.type)+'</small></div></button>').join('')||'<div class="empty">لا توجد نتائج</div>';document.querySelectorAll('[data-cmd-type]').forEach(b=>b.onclick=()=>{const type=b.dataset.cmdType,id=b.dataset.cmdId;root.remove();if(type==='route'){c.setRoute(id);c.render()}else c.quick(type,id)})};
+ draw('');const input=document.querySelector('#cmdInput');input.oninput=()=>draw(input.value);input.onkeydown=e=>{if(e.key==='Escape')root.remove();if(e.key==='Enter')document.querySelector('#cmdResults button')?.click()};root.onclick=e=>{if(e.target.classList.contains('command-overlay'))root.remove()}
+}
+function initGlobal(c){
+ migrate(c);runAutomations(c,false);sessionTick(c);noteActivity(c);
+ if(!window.__nbAdvInit){window.__nbAdvInit=true;document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showCommand(c)}if(e.key==='Escape')document.querySelector('#commandRoot')?.remove()});['click','keydown','touchstart'].forEach(ev=>document.addEventListener(ev,()=>noteActivity(c),{passive:true}));setInterval(()=>sessionTick(c),60000);setInterval(()=>mirrorIndexedDB(c),120000)}
+}
+function wireInvoiceExtras(c){document.querySelectorAll('[data-preview-invoice]').forEach(()=>{});document.querySelectorAll('[data-invoice]').forEach(()=>{});const cards=document.querySelectorAll('[data-invoice-card]');cards.forEach(card=>{const id=card.querySelector('[data-invoice]')?.dataset.invoice;if(!id)return;const actions=card.querySelector('.invoice-card-actions');if(actions&&!actions.querySelector('[data-partial-return]'))actions.insertAdjacentHTML('beforeend','<button class="btn sm outline" data-partial-return="'+id+'">'+c.icon('history',15)+' مرتجع جزئي</button>')});document.querySelectorAll('[data-partial-return]').forEach(b=>b.onclick=()=>openPartialReturn(c,b.dataset.partialReturn))}
+function guardFinancialEdit(c,entity){
+ const s=c.db.security;if(!s?.lockFinancialEdits)return true;
+ const date=entity?.date||c.today();if(s.lockDate&&date<=s.lockDate){c.toast('الفترة مقفلة حتى '+s.lockDate);return false}return true
+}
+window.NBADV={migrate,recordChange,availableStock,reservedQty,viewWorkflows,wireWorkflows,openPartialReturn,runAutomations,viewAutomation,wireAutomation,viewFinancePro,viewPayroll,wirePayroll,viewSecurity,wireSecurity,showLock,sessionTick,noteActivity,viewIntegrations,wireIntegrations,viewQA,wireQA,showCommand,initGlobal,wireInvoiceExtras,mirrorIndexedDB,guardFinancialEdit,hashText};
+})();
