@@ -18,6 +18,9 @@ function migrate(c){
  d.ui=d.ui||{};d.ui.favorites=d.ui.favorites||['dashboard','sales','inventory','reports'];
  d.settings.modules=d.settings.modules||{};
  ['workflows','automation','financepro','payroll','integrations','security','qa'].forEach(k=>{if(d.settings.modules[k]===undefined)d.settings.modules[k]=true});
+ const advModules=['workflows','automation','financepro','payroll','integrations','security','qa','documents'],acts=['view','create','edit','delete','approve','export'];
+ Object.keys(d.permissions||{}).forEach(role=>{advModules.forEach(m=>{if(!d.permissions[role][m]){d.permissions[role][m]={};acts.forEach(a=>d.permissions[role][m][a]=role==='Owner'||role==='Admin'||(role==='Viewer'?a==='view':true))}})});
+
  (d.products||[]).forEach(p=>Object.assign(p,{uoms:p.uoms||['قطعة'],lotTracked:!!p.lotTracked,serialTracked:!!p.serialTracked,expiryTracked:!!p.expiryTracked}));
  (d.customers||[]).forEach(x=>Object.assign(x,{paymentTerms:x.paymentTerms||d.settings.defaultPaymentTerms||'نقدي',pricelist:x.pricelist||'retail'}));
 }
