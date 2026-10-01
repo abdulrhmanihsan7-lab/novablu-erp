@@ -1,5 +1,5 @@
-const CACHE='novablu-erp-0.11-mobile-r1';
-const ASSETS=['./','./index.html','./pro-modules.js','./invoice-v03.js','./invoice-v03.css','./hyper-v04.js','./hyper-v04.css','./advanced-v05.js','./advanced-v05.css','./ux-v06.js','./ux-v06.css','./xlsx-v07.js','./barcode-v07.js','./release-v07.js','./release-v07.css','./saas-v08.js','./saas-v08.css','./activation-v09.js','./activation-v09.css','./reliability-v10.js','./reliability-v10.css','./mobile-v11.js','./mobile-v11.css','./manifest.json','./icon.svg'];
+const CACHE='novablu-erp-0.14-local-complete-r1';
+const ASSETS=['./','./index.html','./pro-modules.js','./invoice-v03.js','./invoice-v03.css','./hyper-v04.js','./hyper-v04.css','./advanced-v05.js','./advanced-v05.css','./ux-v06.js','./ux-v06.css','./xlsx-v07.js','./barcode-v07.js','./release-v07.js','./release-v07.css','./saas-v08.js','./saas-v08.css','./activation-v09.js','./activation-v09.css','./reliability-v10.js','./reliability-v10.css','./mobile-v11.js','./mobile-v11.css','./rcqa-v12.js','./rcqa-v12.css','./finalux-v13.js','./finalux-v13.css','./localcomplete-v14.js','./localcomplete-v14.css','./manifest.json','./icon.svg'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{
