@@ -27,7 +27,16 @@ function migrate(c){
   {id:'approval',name:'تنبيه الموافقات المعلقة',type:'pending_approval',enabled:true,local:true}
  ];
  d.settings.modules=d.settings.modules||{};
- ['owner','assistant','subscription','launch'].forEach(k=>{if(d.settings.modules[k]===undefined)d.settings.modules[k]=true});
+ const saasMods=['owner','assistant','subscription','launch'];
+ saasMods.forEach(k=>{if(d.settings.modules[k]===undefined)d.settings.modules[k]=true});
+ const acts=['view','create','edit','delete','approve','export'];
+ Object.keys(d.permissions||{}).forEach(role=>{
+  d.permissions[role]=d.permissions[role]||{};
+  saasMods.forEach(m=>{if(!d.permissions[role][m]){d.permissions[role][m]={};acts.forEach(a=>d.permissions[role][m][a]=false)}});
+  if(['Owner','Admin'].includes(role))saasMods.forEach(m=>acts.forEach(a=>d.permissions[role][m][a]=true));
+  if(role==='Manager'){d.permissions[role].owner.view=true;d.permissions[role].assistant.view=true;d.permissions[role].launch.view=true}
+  if(!['Owner','Admin'].includes(role))d.permissions[role].assistant.view=true;
+ });
 }
 function companyInvoices(c){return c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt&&['confirmed','partial','paid'].includes(i.status))}
 function monthKey(){return new Date().toISOString().slice(0,7)}
