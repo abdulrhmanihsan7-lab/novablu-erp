@@ -20,6 +20,7 @@ function migrate(c){
  d.saas.onboarding=Object.assign({businessType:'',completedAt:null},d.saas.onboarding||{});
  d.saas.lastDigestDate=d.saas.lastDigestDate||'';
  d.assistantHistory=d.assistantHistory||[];
+ d.supportTickets=d.supportTickets||[];
  d.automationRecipes=d.automationRecipes||[
   {id:'digest',name:'ملخص المالك اليومي',type:'daily_digest',enabled:true,local:true},
   {id:'low',name:'تنبيه المخزون المنخفض',type:'low_stock_plus',enabled:true,local:true},
@@ -27,15 +28,15 @@ function migrate(c){
   {id:'approval',name:'تنبيه الموافقات المعلقة',type:'pending_approval',enabled:true,local:true}
  ];
  d.settings.modules=d.settings.modules||{};
- const saasMods=['owner','assistant','subscription','launch'];
+ const saasMods=['owner','assistant','subscription','launch','support'];
  saasMods.forEach(k=>{if(d.settings.modules[k]===undefined)d.settings.modules[k]=true});
  const acts=['view','create','edit','delete','approve','export'];
  Object.keys(d.permissions||{}).forEach(role=>{
   d.permissions[role]=d.permissions[role]||{};
   saasMods.forEach(m=>{if(!d.permissions[role][m]){d.permissions[role][m]={};acts.forEach(a=>d.permissions[role][m][a]=false)}});
   if(['Owner','Admin'].includes(role))saasMods.forEach(m=>acts.forEach(a=>d.permissions[role][m][a]=true));
-  if(role==='Manager'){d.permissions[role].owner.view=true;d.permissions[role].assistant.view=true;d.permissions[role].launch.view=true}
-  if(!['Owner','Admin'].includes(role))d.permissions[role].assistant.view=true;
+  if(role==='Manager'){d.permissions[role].owner.view=true;d.permissions[role].assistant.view=true;d.permissions[role].launch.view=true;d.permissions[role].support.view=true}
+  if(!['Owner','Admin'].includes(role)){d.permissions[role].assistant.view=true;d.permissions[role].support.view=true;}
  });
 }
 function companyInvoices(c){return c.db.invoices.filter(i=>i.companyId===c.db.session.companyId&&!i.deletedAt&&['confirmed','partial','paid'].includes(i.status))}
@@ -168,11 +169,31 @@ function viewIntegrations(c){
  return base+`<div class="card"><div class="card-head"><h3>جاهزية قنوات الاشتراك</h3></div><div class="integration-readiness"><div><span class="channel-icon">☁</span><strong>Cloud Sync</strong><small>${b.connected?'متصل':'Supabase غير مربوط بعد'}</small><span class="badge ${b.connected?'green':'gray'}">${b.connected?'Online':'Pending'}</span></div><div><span class="channel-icon">WA</span><strong>WhatsApp</strong><small>إرسال فواتير وتنبيهات بعد API</small><span class="badge gray">Backend</span></div><div><span class="channel-icon">TG</span><strong>Telegram</strong><small>تقارير وتنبيهات القنوات</small><span class="badge gray">Backend</span></div><div><span class="channel-icon">@</span><strong>Email</strong><small>فواتير وتقارير تلقائية</small><span class="badge gray">Backend</span></div></div></div>`;
 }
 function wireIntegrations(c){NBADV.wireIntegrations(c)}
+function viewSupport(c){
+ const connected=!!c.db.saas.backend.connected,tickets=c.db.supportTickets.slice(-10).reverse();
+ const checks=[
+  ['PWA / Service Worker',!!navigator.serviceWorker],
+  ['IndexedDB','indexedDB' in window],
+  ['Local database',!!c.db.meta&&Array.isArray(c.db.products)],
+  ['Cloud Backend',connected],
+  ['Backup tested',!!c.db.saas.lastBackupAt]
+ ];
+ return c.pageHead('مركز المساعدة','مساعدة، تشخيص، وتقارير دعم من داخل NovaBlu',`<button class="btn outline" id="supportBundle">تصدير تقرير دعم</button>`)+
+ `<div class="saas-grid2"><section class="card"><div class="card-head"><h3>تشخيص سريع</h3></div>${checks.map(x=>`<div class="readiness-row"><span>${c.esc(x[0])}</span><b class="${x[1]?'good-text':'warn-text'}">${x[1]?'جاهز':'يحتاج إعداد'}</b></div>`).join('')}</section>
+ <section class="card"><div class="card-head"><h3>What's New — 0.08</h3></div><div class="support-news"><p>لوحة مالك تنفيذية جديدة.</p><p>NovaBlu AI للتحليل المحلي.</p><p>تجربة وخطط وUsage Meter.</p><p>Launch Center وAutomation Recipes.</p><p>تجهيز Supabase/RLS للمرحلة السحابية.</p></div></section></div>
+ <div class="saas-grid2"><section class="card"><div class="card-head"><h3>أسئلة سريعة</h3></div><details><summary>شلون أبدأ؟</summary><p>افتح مركز الانطلاق وكمل الخطوات من بيانات الشركة إلى أول فاتورة ونسخة احتياطية.</p></details><details><summary>بياناتي وين محفوظة حالياً؟</summary><p>حالياً محلياً على الجهاز مع IndexedDB/LocalStorage. المزامنة السحابية تظهر كمتصلة فقط بعد Backend فعلي.</p></details><details><summary>هل الاشتراك يسحب فلوس حالياً؟</summary><p>لا. صفحة الخطط حالياً مرحلة تجهيز ولا يوجد خصم أو Billing Provider مربوط.</p></details><details><summary>هل NovaBlu AI سحابي؟</summary><p>حالياً تحليل محلي لبيانات ERP. محرك AI السحابي يضاف عند ربط Backend وخدمة AI.</p></details></section>
+ <section class="card"><div class="card-head"><h3>طلب دعم</h3></div><form id="supportForm"><div class="field"><label>العنوان</label><input name="title" required></div><div class="field"><label>التفاصيل</label><textarea name="body" rows="5" required></textarea></div><button class="btn primary">حفظ طلب الدعم محلياً</button></form><div class="sub" style="margin-top:8px">إرسال الطلب لفريق الدعم تلقائياً يتفعل بعد Cloud Backend.</div></section></div>
+ <div class="card"><div class="card-head"><h3>آخر طلبات الدعم المحلية</h3><span class="badge gray">${tickets.length}</span></div>${tickets.map(t=>`<div class="stat-row"><div class="grow"><strong>${c.esc(t.title)}</strong><div class="sub">${new Date(t.createdAt).toLocaleString('ar-IQ')} • ${c.esc(t.status)}</div></div></div>`).join('')||'<div class="empty">لا توجد طلبات</div>'}</div>`;
+}
+function wireSupport(c){
+ const f=document.querySelector('#supportForm');if(f)f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f);c.db.supportTickets.push({id:c.uid('ticket'),title:String(fd.get('title')||''),body:String(fd.get('body')||''),status:'local-draft',createdAt:c.now(),userId:c.currentUser().id});c.audit('طلب دعم محلي','Support',String(fd.get('title')||''));c.save('تم حفظ طلب الدعم');c.render()};
+ document.querySelector('#supportBundle')?.addEventListener('click',()=>{const data={generatedAt:new Date().toISOString(),appVersion:'0.08',browser:navigator.userAgent,workspace:c.db.saas.workspaceId,company:{id:c.company()?.id,name:c.company()?.name},counts:{products:c.db.products.length,invoices:c.db.invoices.length,users:c.db.users.length,stockMoves:c.db.stockMoves.length},backend:c.db.saas.backend,qaRuns:(c.db.qaRuns||[]).slice(-3)};c.download('NovaBlu_Support_'+c.today()+'.json',data)})
+}
 function postRender(c,route){
- if(!['subscription','launch'].includes(route)){const a=document.querySelector('.page-head .actions');if(a&&!document.querySelector('.saas-plan-chip')){const b=document.createElement('button');b.className='btn outline saas-plan-chip';b.dataset.route='subscription';b.innerHTML='◈ '+c.esc(plan(c).name)+(c.db.saas.plan==='trial'?' • '+trialDaysLeft(c)+' يوم':'');a.appendChild(b);b.onclick=()=>c.setRoute('subscription')}}
+ if(!['subscription','launch'].includes(route)){const a=document.querySelector('.page-head .actions');if(a&&!document.querySelector('.saas-plan-chip')){const b=document.createElement('button');b.className='btn outline saas-plan-chip';b.dataset.route='subscription';b.innerHTML='◈ '+c.esc(plan(c).name)+(c.db.saas.plan==='trial'?' • '+trialDaysLeft(c)+' يوم':'');a.appendChild(b);b.onclick=()=>{c.setRoute('subscription');c.render()}}}
  if(c.db.saas.lastDigestDate!==c.today()){runRecipes(c,false)}
 }
 function markBackup(c){c.db.saas.lastBackupAt=c.now();c.save()}
 function init(c){migrate(c)}
-window.NBSAAS={plans,migrate,init,usage,plan,trialDaysLeft,viewOwner,wireOwner,viewAssistant,wireAssistant,viewLaunch,wireLaunch,viewSubscription,wireSubscription,viewAutomation,wireAutomation,viewIntegrations,wireIntegrations,postRender,runRecipes,markBackup,assistantAnswer};
+window.NBSAAS={plans,migrate,init,usage,plan,trialDaysLeft,viewOwner,wireOwner,viewAssistant,wireAssistant,viewLaunch,wireLaunch,viewSubscription,wireSubscription,viewSupport,wireSupport,viewAutomation,wireAutomation,viewIntegrations,wireIntegrations,postRender,runRecipes,markBackup,assistantAnswer};
 })();
