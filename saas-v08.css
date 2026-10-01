@@ -24,3 +24,7 @@ body.theme-dark .pulse-list>div,body.theme-dark .ai-prompt,body.theme-dark .busi
 @media(max-width:1050px){.owner-kpis{grid-template-columns:1fr 1fr}.plan-grid{grid-template-columns:1fr 1fr}.integration-readiness{grid-template-columns:1fr 1fr}.ai-shell{grid-template-columns:220px minmax(0,1fr)}}
 @media(max-width:760px){.saas-hero,.subscription-head{align-items:flex-start}.owner-kpis,.saas-grid2,.plan-grid,.recipe-grid{grid-template-columns:1fr}.ai-shell{grid-template-columns:1fr;min-height:auto}.ai-side{order:2}.ai-history{max-height:470px;min-height:330px}.integration-readiness{grid-template-columns:1fr 1fr}.pulse-list{grid-template-columns:1fr 1fr}.trial-ring{width:82px;height:82px}.plan-card ul{min-height:0}}
 @media(max-width:480px){.owner-kpis,.pulse-list,.business-types,.integration-readiness{grid-template-columns:1fr}.subscription-head{flex-direction:column}.saas-hero{padding:16px}.ai-compose{flex-direction:column}.ai-compose .btn{width:100%}}
+
+/* Support center */
+.support-news p{margin:0;padding:8px 0;border-bottom:1px solid var(--line);font-size:11px}.support-news p:last-child{border-bottom:0}
+.card details{border-bottom:1px solid var(--line);padding:9px 0}.card details:last-child{border-bottom:0}.card summary{cursor:pointer;font-weight:700}.card details p{color:var(--muted);line-height:1.8;margin:7px 0 0}
