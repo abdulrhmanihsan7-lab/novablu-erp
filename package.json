@@ -1,6 +1,6 @@
 {
   "name": "novablu-erp-desktop",
-  "version": "0.11.0",
+  "version": "0.14.0",
   "private": true,
   "description": "NovaBlu ERP 0.11 Desktop for Windows",
   "main": "desktop/main.js",
@@ -17,7 +17,7 @@
   "build": {
     "appId": "ai.novablu.erp",
     "productName": "NovaBlu ERP",
-    "artifactName": "NovaBlu-ERP-0.11-Setup-${arch}.${ext}",
+    "artifactName": "NovaBlu-ERP-0.14-Setup-${arch}.${ext}",
     "asar": true,
     "compression": "maximum",
     "directories": {
