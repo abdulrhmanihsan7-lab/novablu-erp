@@ -50,14 +50,14 @@ jobs:
       - name: Package complete source code
         shell: pwsh
         run: |
-          $src = Join-Path $env:RUNNER_TEMP "NovaBlu-ERP-0.11-Source"
+          $src = Join-Path $env:RUNNER_TEMP "NovaBlu-ERP-0.14-Source"
           New-Item -ItemType Directory -Path $src -Force | Out-Null
           Get-ChildItem -Force | Where-Object {
             $_.Name -notin @("node_modules","dist",".git")
           } | ForEach-Object {
             Copy-Item $_.FullName -Destination $src -Recurse -Force
           }
-          $zip = Join-Path $PWD "dist\NovaBlu-ERP-0.11-Source.zip"
+          $zip = Join-Path $PWD "dist\NovaBlu-ERP-0.14-Source.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path (Join-Path $src "*") -DestinationPath $zip -CompressionLevel Optimal
 
@@ -72,10 +72,10 @@ jobs:
       - name: Upload Windows app and source
         uses: actions/upload-artifact@v4
         with:
-          name: NovaBlu-ERP-0.11-Windows-and-Source
+          name: NovaBlu-ERP-0.14-Windows-and-Source
           path: |
-            dist/NovaBlu-ERP-0.11-Setup-x64.exe
-            dist/NovaBlu-ERP-0.11-Source.zip
+            dist/NovaBlu-ERP-0.14-Setup-x64.exe
+            dist/NovaBlu-ERP-0.14-Source.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
