@@ -70,7 +70,7 @@ test.describe('NovaBlu ERP 0.14 local smoke', () => {
 
     const sw = await page.request.get('http://127.0.0.1:4173/sw.js');
     expect(sw.ok()).toBeTruthy();
-    expect(await sw.text()).toContain('novablu-erp-0.14-local-complete-r1');
+    expect(await sw.text()).toContain('novablu-erp-0.14-local-complete-r2');
 
     for (const asset of ['rcqa-v12.js','finalux-v13.js','localcomplete-v14.js']) {
       const r = await page.request.get('http://127.0.0.1:4173/' + asset);
