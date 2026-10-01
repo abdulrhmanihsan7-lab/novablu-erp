@@ -1,0 +1,53 @@
+name: NovaBlu Browser Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "*.js"
+      - "*.css"
+      - "manifest.json"
+      - "package.json"
+      - "tests/**"
+      - ".github/workflows/smoke-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: novablu-browser-smoke
+  cancel-in-progress: true
+
+jobs:
+  chromium-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install test dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local app
+        run: |
+          python3 -m http.server 4173 > /tmp/novablu-http.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/novablu-http.log
+          exit 1
+
+      - name: Run browser smoke
+        run: npm run test:smoke
