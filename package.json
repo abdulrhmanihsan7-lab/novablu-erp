@@ -1,0 +1,57 @@
+{
+  "name": "novablu-erp-desktop",
+  "version": "0.11.0",
+  "private": true,
+  "description": "NovaBlu ERP 0.11 Desktop for Windows",
+  "main": "desktop/main.js",
+  "author": "NovaBlu AI",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^38.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "ai.novablu.erp",
+    "productName": "NovaBlu ERP",
+    "artifactName": "NovaBlu-ERP-0.11-Setup-${arch}.${ext}",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "*.js",
+      "*.css",
+      "manifest.json",
+      "icon.svg",
+      "desktop/**/*",
+      "!sw.js",
+      "!supabase-v08.sql",
+      "!cloud/**/*",
+      "!dist/**/*",
+      "!node_modules/**/*",
+      "!.github/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NovaBlu ERP",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
