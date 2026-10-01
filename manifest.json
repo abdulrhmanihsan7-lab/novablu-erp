@@ -1,7 +1,7 @@
 {
   "name": "NovaBlu ERP",
   "short_name": "NovaBlu ERP",
-  "description": "NovaBlu ERP — نظام إدارة أعمال عربي",
+  "description": "NovaBlu ERP — نظام إدارة أعمال عربي ذكي",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "./",
@@ -15,6 +15,69 @@
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "categories": [
+    "business",
+    "productivity",
+    "finance"
+  ],
+  "shortcuts": [
+    {
+      "name": "لوحة المالك",
+      "short_name": "المالك",
+      "description": "ملخص الإدارة",
+      "url": "./?route=owner",
+      "icons": [
+        {
+          "src": "./icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "المبيعات",
+      "short_name": "المبيعات",
+      "description": "الفواتير والمبيعات",
+      "url": "./?route=sales",
+      "icons": [
+        {
+          "src": "./icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "نقطة البيع",
+      "short_name": "POS",
+      "description": "فتح نقطة البيع",
+      "url": "./?route=pos",
+      "icons": [
+        {
+          "src": "./icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "المخزون",
+      "short_name": "المخزون",
+      "description": "متابعة المخزون",
+      "url": "./?route=inventory",
+      "icons": [
+        {
+          "src": "./icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
     }
   ]
 }
