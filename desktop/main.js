@@ -11,7 +11,7 @@ function createWindow() {
     minHeight: 680,
     show: false,
     backgroundColor: '#f5f7fb',
-    title: 'NovaBlu ERP 0.11',
+    title: 'NovaBlu ERP 0.14',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
