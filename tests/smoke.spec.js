@@ -63,15 +63,24 @@ test.describe('NovaBlu ERP 0.15 final local candidate', () => {
     expect(schema.invoices).toBeGreaterThan(0);
     expect(schema.rcScore).toBeGreaterThan(0);
     expect(pageErrors).toEqual([]);
+    expect(nativeDialogs).toEqual([]);
   });
 
-  test('polished core actions use in-app modals', async ({ page }) => {
+  test('polished core actions use in-app modals without native prompt dialogs', async ({ page }) => {
     const pageErrors = await start(page);
+    const nativeDialogs = [];
+    page.on('dialog', async d => { nativeDialogs.push(d.type()+':'+d.message()); await d.dismiss(); });
 
     await route(page,'products');
     await expectModalFrom(page,'#printLabels');
 
+    await route(page,'org');
+    await expectModalFrom(page,'#newBranch');
+    await expectModalFrom(page,'#newWarehouse');
+
     await route(page,'pos');
+    await expectModalFrom(page,'#shiftBtn');
+    await expectModalFrom(page,'#posReturn');
     await expectModalFrom(page,'#posExchange');
     await expectModalFrom(page,'#couponManage');
 
@@ -83,6 +92,10 @@ test.describe('NovaBlu ERP 0.15 final local candidate', () => {
     await expectModalFrom(page,'#newOpening');
     await expectModalFrom(page,'#newCC');
     await expectModalFrom(page,'#closePeriod');
+
+    await route(page,'payroll');
+    await expectModalFrom(page,'#newPayroll');
+    await expectModalFrom(page,'#newLoan');
 
     await route(page,'documents');
     await expectModalFrom(page,'#docReceipt');
@@ -121,7 +134,7 @@ test.describe('NovaBlu ERP 0.15 final local candidate', () => {
 
     const sw = await page.request.get('http://127.0.0.1:4173/sw.js');
     expect(sw.ok()).toBeTruthy();
-    expect(await sw.text()).toContain('novablu-erp-0.15-final-local-r1');
+    expect(await sw.text()).toContain('novablu-erp-0.15-final-local-r2');
 
     for (const asset of ['rcqa-v12.js','finalux-v13.js','localcomplete-v14.js','finalcandidate-v15.js']) {
       const r = await page.request.get('http://127.0.0.1:4173/' + asset);
