@@ -4,7 +4,7 @@ const N=v=>Number(v||0);
 function migrate(c){
  const d=c.db;d.meta=d.meta||{};d.meta.version=Math.max(Number(d.meta.version||1),15);
  d.pilot=d.pilot||{startedAt:0,completedAt:0,checks:{},notes:[]};
- d.localRelease=d.localRelease||{};d.localRelease.featureFreeze=true;d.localRelease.channel='final-local-candidate';
+ d.localRelease=d.localRelease||{};d.localRelease.featureFreeze=true;d.localRelease.channel='final-local-candidate';d.localRelease.firstReleaseTarget='1.0';d.localRelease.firstReleaseRequires=['cloud_database','server_auth','multi_device_sync','billing','external_integrations','server_security','migration'];
  d.settings.modules=d.settings.modules||{};if(d.settings.modules.pilot===undefined)d.settings.modules.pilot=true;
  const acts=['view','create','edit','delete','approve','export'];
  Object.keys(d.permissions||{}).forEach(role=>{
@@ -124,6 +124,7 @@ function showPartyLedgerModern(c,type,id){
  else{const rows=c.db.purchaseOrders.filter(o=>o.supplierId===p.id).map(o=>{const total=(o.items||[]).reduce((z,i)=>z+N(i.qty)*N(i.cost),0),paid=(o.payments||[]).reduce((z,x)=>z+N(x.amount),0);return[o.date,o.number,total,paid,total-paid]});c.openModal('كشف المورد — '+p.name,`<div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>PO</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r[0]}</td><td>${c.esc(r[1])}</td><td>${c.fmt(r[2])}</td><td>${c.fmt(r[3])}</td><td><strong>${c.fmt(r[4])}</strong></td></tr>`).join('')}</tbody></table></div>`,true)}
 }
 function postRender(c,route){
+ if(route==='releasecenter'&&!document.querySelector('#v1Gate')){const host=document.querySelector('#view');if(host)host.insertAdjacentHTML('beforeend',`<section class="card" id="v1Gate"><div class="card-head"><h3>بوابة الإصدار الأول 1.0</h3><span class="badge purple">FINAL LINKING</span></div><div class="release-scope"><p>1.0 يبدأ فقط عند تنفيذ Cloud Database + Server Auth + Multi-device Sync.</p><p>يضاف Billing والتكاملات الحقيقية وServer Security وMigration من 0.15.</p><p>لن يتحول رقم الإصدار إلى 1.0 قبل نجاح اختبارات الربط والمزامنة والأمان.</p></div></section>`) }
  if(route==='products')wireProductPolish(c);
  if(route==='pos'){wirePOSPolish(c);wireCouponPolish(c);}
  if(route==='purchasing'){wirePurchasingPolish(c);wireRFQPolish(c);}
