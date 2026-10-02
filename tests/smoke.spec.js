@@ -63,7 +63,6 @@ test.describe('NovaBlu ERP 0.15 final local candidate', () => {
     expect(schema.invoices).toBeGreaterThan(0);
     expect(schema.rcScore).toBeGreaterThan(0);
     expect(pageErrors).toEqual([]);
-    expect(nativeDialogs).toEqual([]);
   });
 
   test('polished core actions use in-app modals without native prompt dialogs', async ({ page }) => {
@@ -105,6 +104,7 @@ test.describe('NovaBlu ERP 0.15 final local candidate', () => {
     await expectModalFrom(page,'#docThermal');
 
     expect(pageErrors).toEqual([]);
+    expect(nativeDialogs).toEqual([]);
   });
 
   test('local backup serialization roundtrip is lossless', async ({ page }) => {
