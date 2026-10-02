@@ -11,7 +11,8 @@ on:
       - "*.js"
       - "*.css"
       - "manifest.json"
-      - "icon.svg"
+      - "docs/**"
+      - "CHANGELOG.md"
       - ".github/workflows/windows-build.yml"
 
 permissions:
@@ -24,7 +25,7 @@ concurrency:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -44,38 +45,76 @@ jobs:
       - name: Build Windows installer
         shell: pwsh
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npm run dist:win
+
+      - name: Windows runtime smoke
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "dist\win-unpacked\NovaBlu ERP.exe"
+          if (!(Test-Path $exe)) { throw "Unpacked NovaBlu ERP executable not found" }
+          $p = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Windows runtime smoke failed with exit code $($p.ExitCode)" }
+          "Windows runtime smoke: PASS" | Out-File "dist\WINDOWS_SMOKE.txt" -Encoding ascii
+
+      - name: Record code signing status
+        shell: pwsh
+        run: |
+          $installer = Join-Path $PWD "dist\NovaBlu-ERP-0.15-Setup-x64.exe"
+          if (!(Test-Path $installer)) { throw "Installer not found" }
+          $sig = Get-AuthenticodeSignature $installer
+          "Status=$($sig.Status)" | Out-File "dist\SIGNING_STATUS.txt" -Encoding ascii
+          "Signer=$($sig.SignerCertificate.Subject)" | Out-File "dist\SIGNING_STATUS.txt" -Append -Encoding ascii
+          if ($sig.Status -ne "Valid") {
+            "Trusted production signing is not active. Configure WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD before public 1.0." | Out-File "dist\SIGNING_STATUS.txt" -Append -Encoding ascii
+          }
 
       - name: Package complete source code
         shell: pwsh
         run: |
-          $src = Join-Path $env:RUNNER_TEMP "NovaBlu-ERP-0.14-Source"
+          $src = Join-Path $env:RUNNER_TEMP "NovaBlu-ERP-0.15-Source"
           New-Item -ItemType Directory -Path $src -Force | Out-Null
           Get-ChildItem -Force | Where-Object {
             $_.Name -notin @("node_modules","dist",".git")
           } | ForEach-Object {
             Copy-Item $_.FullName -Destination $src -Recurse -Force
           }
-          $zip = Join-Path $PWD "dist\NovaBlu-ERP-0.14-Source.zip"
+          $zip = Join-Path $PWD "dist\NovaBlu-ERP-0.15-Source.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path (Join-Path $src "*") -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Package local release docs
+        shell: pwsh
+        run: |
+          $rel = Join-Path $env:RUNNER_TEMP "NovaBlu-ERP-0.15-Release"
+          New-Item -ItemType Directory -Path $rel -Force | Out-Null
+          Copy-Item "CHANGELOG.md" $rel -Force
+          Copy-Item "docs\USER_GUIDE_AR.md" $rel -Force
+          Copy-Item "docs\RELEASE_CHECKLIST_0.15.md" $rel -Force
+          Copy-Item "docs\V1_LINKING_PLAN.md" $rel -Force
+          Copy-Item "dist\WINDOWS_SMOKE.txt" $rel -Force
+          Copy-Item "dist\SIGNING_STATUS.txt" $rel -Force
+          Compress-Archive -Path (Join-Path $rel "*") -DestinationPath "dist\NovaBlu-ERP-0.15-Release-Docs.zip" -CompressionLevel Optimal
 
       - name: Build checksums
         shell: pwsh
         run: |
-          Get-ChildItem dist -File | Where-Object { $_.Extension -in @(".exe",".zip") } | ForEach-Object {
+          Get-ChildItem dist -File | Where-Object { $_.Extension -in @(".exe",".zip",".txt") -and $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash.ToLower())  $($_.Name)" | Out-File -FilePath "dist\SHA256SUMS.txt" -Append -Encoding ascii
           }
 
-      - name: Upload Windows app and source
+      - name: Upload Windows app source and release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: NovaBlu-ERP-0.14-Windows-and-Source
+          name: NovaBlu-ERP-0.15-Final-Local-Candidate
           path: |
-            dist/NovaBlu-ERP-0.14-Setup-x64.exe
-            dist/NovaBlu-ERP-0.14-Source.zip
+            dist/NovaBlu-ERP-0.15-Setup-x64.exe
+            dist/NovaBlu-ERP-0.15-Source.zip
+            dist/NovaBlu-ERP-0.15-Release-Docs.zip
+            dist/WINDOWS_SMOKE.txt
+            dist/SIGNING_STATUS.txt
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
